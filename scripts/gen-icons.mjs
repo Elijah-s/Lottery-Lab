@@ -1,14 +1,12 @@
 // Generates the Lottery Lab app icon set (PNG + ICNS + ICO).
 //
 // Design:
-//   1. macOS-style squircle background with a vertical indigo gradient
-//      (deep at the top → bright at the bottom), giving it weight and
-//      matching the "local desktop tool" vibe.
-//   2. Centered white lottery ball with a subtle inner highlight and
-//      soft drop shadow for depth.
-//   3. Three colored pips on the ball (red / teal / gold) arranged in
-//      a triangle — reads as "numbers" / "draw" at any size, and at
-//      16px the pips collapse into a readable dot cluster.
+//   1. Cream rounded-square background, matching the README mark and
+//      the app's light theme.
+//   2. Red / blue lottery balls plus a small gold ball, so SSQ / DLT
+//      intent remains readable in Dock, Finder, and Windows shortcuts.
+//   3. Data-curve strokes behind and below the balls to suggest local
+//      analysis instead of a plain lottery-ticket icon.
 //
 // No external image libraries — we keep the zero-dep style of the
 // existing placeholder script, just with real drawing primitives
@@ -130,6 +128,53 @@ function fillCircle(buf, size, cx, cy, radius, [r, g, b, a = 255]) {
   }
 }
 
+function drawLineStroke(buf, size, x1, y1, x2, y2, width, color) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) * 1.5));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    fillCircle(
+      buf,
+      size,
+      x1 + (x2 - x1) * t,
+      y1 + (y2 - y1) * t,
+      width / 2,
+      color,
+    );
+  }
+}
+
+function drawPolylineStroke(buf, size, points, width, color) {
+  for (let i = 0; i < points.length - 1; i++) {
+    drawLineStroke(
+      buf,
+      size,
+      points[i][0],
+      points[i][1],
+      points[i + 1][0],
+      points[i + 1][1],
+      width,
+      color,
+    );
+  }
+}
+
+function cubicPoint(p0, p1, p2, p3, t) {
+  const mt = 1 - t;
+  return [
+    mt ** 3 * p0[0] + 3 * mt ** 2 * t * p1[0] + 3 * mt * t ** 2 * p2[0] + t ** 3 * p3[0],
+    mt ** 3 * p0[1] + 3 * mt ** 2 * t * p1[1] + 3 * mt * t ** 2 * p2[1] + t ** 3 * p3[1],
+  ];
+}
+
+function drawCubicStroke(buf, size, p0, p1, p2, p3, width, color) {
+  let prev = p0;
+  for (let i = 1; i <= 96; i++) {
+    const point = cubicPoint(p0, p1, p2, p3, i / 96);
+    drawLineStroke(buf, size, prev[0], prev[1], point[0], point[1], width, color);
+    prev = point;
+  }
+}
+
 /** Soft radial highlight on the upper-left of the ball. */
 function applyBallHighlight(buf, size, cx, cy, radius) {
   const hlCx = cx - radius * 0.35;
@@ -214,49 +259,71 @@ function encodePng(rgba, size) {
 
 // ---------- Design ---------------------------------------------------------
 
-// Indigo gradient (deep top → bright bottom) for the squircle.
-const BG_TOP = [30, 27, 75];    // indigo-950
-const BG_BOTTOM = [99, 102, 241]; // indigo-500
-const BALL_COLOR = [255, 255, 255];
-
-// Lottery-ball pips: a warm triad so they pop on white.
-const PIP_COLORS = [
-  [220, 38, 38, 255],   // red (SSQ red)
-  [14, 165, 233, 255],  // sky blue (SSQ blue)
-  [234, 179, 8, 255],   // amber gold (accent)
-];
+const CREAM = [255, 248, 236];
+const BORDER = [217, 203, 182];
+const BLUE_LINE = [38, 76, 120, 255];
+const GOLD_LINE = [212, 168, 63, 255];
+const RED_BALL = [217, 74, 69, 255];
+const RED_BORDER = [143, 37, 36, 255];
+const BLUE_BALL = [47, 111, 168, 255];
+const BLUE_BORDER = [30, 66, 103, 255];
+const GOLD_BALL = [245, 215, 122, 255];
+const GOLD_BORDER = [163, 125, 34, 255];
+const CREAM_STROKE = [255, 248, 236, 255];
 
 function renderIcon(size) {
   const buf = makeBuffer(size);
+  const s = size / 160;
+  const px = (value) => value * s;
+  const point = (x, y) => [px(x), px(y)];
 
-  // Squircle background. Margin keeps the icon from touching the
-  // canvas edge so the Finder / Dock drop-shadow has room to breathe.
-  const margin = Math.round(size * 0.08);
-  const radius = Math.round(size * 0.22);
-  fillRoundedRect(buf, size, margin, radius, BG_TOP, BG_BOTTOM);
+  fillRoundedRect(buf, size, px(8), px(36), BORDER, BORDER);
+  fillRoundedRect(buf, size, px(11), px(33), CREAM, CREAM);
 
-  // Centered white ball — intentionally a bit above center so the pips
-  // leave room for the drop shadow below.
-  const cx = size / 2;
-  const cy = size * 0.48;
-  const ballR = size * 0.3;
+  drawCubicStroke(
+    buf,
+    size,
+    point(38, 92),
+    point(48, 56),
+    point(77, 39),
+    point(116, 42),
+    px(8),
+    BLUE_LINE,
+  );
+  drawCubicStroke(
+    buf,
+    size,
+    point(44, 108),
+    point(60, 123),
+    point(86, 127),
+    point(111, 115),
+    px(8),
+    GOLD_LINE,
+  );
 
-  applyDropShadow(buf, size, cx, cy, ballR);
-  fillCircle(buf, size, cx, cy, ballR, [...BALL_COLOR, 255]);
-  applyBallHighlight(buf, size, cx, cy, ballR);
+  fillCircle(buf, size, px(53), px(75), px(20), RED_BORDER);
+  fillCircle(buf, size, px(53), px(75), px(16.5), RED_BALL);
+  fillCircle(buf, size, px(101), px(83), px(20), BLUE_BORDER);
+  fillCircle(buf, size, px(101), px(83), px(16.5), BLUE_BALL);
+  fillCircle(buf, size, px(86), px(49), px(11.5), GOLD_BORDER);
+  fillCircle(buf, size, px(86), px(49), px(8.5), GOLD_BALL);
 
-  // Three pips in a triangle — tight enough that at 16px they still
-  // read as a single punchy cluster.
-  const pipR = Math.max(1.2, size * 0.055);
-  const pipOffset = ballR * 0.42;
-  const positions = [
-    [cx, cy - pipOffset],                                  // top
-    [cx - pipOffset * 0.9, cy + pipOffset * 0.55],         // bottom-left
-    [cx + pipOffset * 0.9, cy + pipOffset * 0.55],         // bottom-right
-  ];
-  positions.forEach((pos, index) => {
-    fillCircle(buf, size, pos[0], pos[1], pipR, PIP_COLORS[index]);
-  });
+  drawLineStroke(buf, size, px(45), px(69), px(61), px(69), px(5), CREAM_STROKE);
+  drawLineStroke(buf, size, px(53), px(61), px(53), px(89), px(5), CREAM_STROKE);
+  drawPolylineStroke(
+    buf,
+    size,
+    [point(94, 75), point(94, 91), point(109, 91)],
+    px(5),
+    CREAM_STROKE,
+  );
+  drawPolylineStroke(
+    buf,
+    size,
+    [point(70, 105), point(78, 94), point(87, 108), point(96, 96)],
+    px(4),
+    BLUE_LINE,
+  );
 
   return buf;
 }
