@@ -1,153 +1,54 @@
 # Lottery Lab
 
-本地彩票分析实验台 — 支持 macOS / Windows 原生安装包，基于 Tauri 2 + React 18 + Vite + TypeScript。
+Lottery Lab 是一个本地运行的彩票分析实验室，面向「双色球」和「大乐透」场景，提供历史开奖同步、需求化推荐生成、开奖复盘和回测分析等功能。
 
-> 这是本地自用工具，不宣称能提高真实中奖概率。推荐结果是「规则合法 + 启发式排序 + AI 解释」的实验输出。
+它不是预测中奖工具，也不提供代购、出票或任何形式的中奖承诺。项目的定位是：把历史数据、规则校验、启发式评分和大模型解释整合到一个桌面应用里，方便做本地化的彩票数据实验。
 
-## 功能
+## 项目特点
 
-- **推荐生成** — 一句自然语言（「双色球 20 元稳一点」），解析意图 → 加权随机候选 → 启发式评分 → 多专家 LLM 解释
-- **数据同步** — 中彩网 / 体彩官方接口抓取；失败时降级到备用源；启动 + 每 6 小时定时 + 可自定义期数的手动同步
-- **开奖复盘** — 同步完成后自动对比已推荐票与实际开奖结果，记录命中数
-- **历史回测** — 多策略（`balanced` / `anti_popular` / `recency_fade`）对比，支持 JSON / CSV 导出
-- **提示词配置** — 三个 AI 专家角色的 prompt 可编辑
-- **AI 设置** — 切换 provider / base URL / model / API Key，未配置时离线回退
+- **本地优先**：数据存储在本机，推荐记录、开奖历史和设置都由本地应用管理。
+- **支持双色球和大乐透**：内置两种彩票的号码规则、金额计算、历史开奖同步和结果复盘。
+- **可生成推荐方案**：输入自然语言需求后，应用会结合历史开奖数据、策略评分和大模型解释生成候选方案。
+- **历史开奖可核对**：同步后可查看近期开奖号码，便于确认本地数据是否已经更新。
+- **回测与复盘**：支持按历史区间对策略进行回测，并对已生成推荐做开奖命中复盘。
+- **大模型可配置**：支持常见兼容接口，密钥仅保存在本机，不在界面明文回显。
+- **跨平台安装包**：已提供 Windows x64、macOS Intel、macOS Apple Silicon 对应安装包。
 
-## 前置依赖
+## 下载
 
-- macOS 12 (Monterey) 或以上
-- Node.js 18+（Node 22 已验证）
-- Rust 1.70+，经 [rustup](https://rustup.rs/) 安装
-- Xcode Command Line Tools (`xcode-select --install`)
+当前版本：`v0.1.0`
 
-## 本地运行
+- [Windows x64 安装包](https://github.com/Elijah-s/Lottery-Lab/releases/download/v0.1.0/Lottery.Lab_0.1.0_x64-setup.exe)
+- [macOS Intel 安装包](https://github.com/Elijah-s/Lottery-Lab/releases/download/v0.1.0/Lottery.Lab_0.1.0_x64.dmg)
+- [macOS Apple Silicon 安装包](https://github.com/Elijah-s/Lottery-Lab/releases/download/v0.1.0/Lottery.Lab_0.1.0_aarch64.dmg)
 
-```bash
-# 安装 JS 依赖
-npm install
+完整发布页：  
+[https://github.com/Elijah-s/Lottery-Lab/releases/tag/v0.1.0](https://github.com/Elijah-s/Lottery-Lab/releases/tag/v0.1.0)
 
-# 开发（自动打开原生窗口，支持热更新）
-npm run tauri dev
+> 当前安装包未进行 Apple / Microsoft 开发者签名。首次启动时，系统可能会出现安全提示，这是未签名桌面应用的正常表现。
 
-# 生产打包 .app
-npm run tauri build
-```
+## 适用场景
 
-首次启动会在 `~/Library/Application Support/com.elijah.lottery-lab/` 下创建 `lottery_lab.db`。
+Lottery Lab 更适合用于：
 
-## 配置 LLM
+- 整理和查看双色球、大乐透历史开奖数据
+- 基于自定义需求生成一组规则合法的候选号码
+- 对生成记录进行复盘和管理
+- 对不同策略做历史区间回测
+- 研究本地桌面应用中的数据同步、规则评分和大模型解释链路
 
-打开应用 → 「设置」页面 → 填写：
+不适合用于：
 
-- Provider（预置 OpenAI Compatible / Anthropic / DeepSeek / OpenRouter / LM Studio / Custom）
-- Base URL
-- Model（如 `gpt-4o-mini` / `deepseek-chat`）
-- API Key（本地存储，不通过网络回显）
+- 真实投注决策依据
+- 任何形式的保底、必中、提高中奖率承诺
+- 代购、出票、资金交易或投注平台接入
 
-未配置时推荐页仍可用，AI 解释会回退到离线启发式摘要。
+## 说明
 
-## 开发命令
+彩票开奖结果具有随机性。历史热冷、分布区间、重复号、奇偶比等统计特征只能作为数据观察角度，不能推导出确定性结果。
 
-| 命令 | 功能 |
-| --- | --- |
-| `npm run dev` | 仅 Vite dev server（浏览器 `:1420`），调 Tauri 命令会失败 |
-| `npm run build` | `tsc --noEmit` + Vite 产物 |
-| `npm run typecheck` | TS 类型检查 |
-| `npm run lint` | ESLint |
-| `npm run test` | Vitest |
-| `cargo check` (`src-tauri/`) | Rust 类型检查 |
-| `cargo clippy -- -D warnings` (`src-tauri/`) | Rust 严格 lint |
+Lottery Lab 的推荐结果仅代表本地规则、历史数据摘要、启发式策略和大模型文本解释的综合输出，不构成投资建议或购彩建议。
 
-## 安装包构建
+## 友情链接
 
-本地 macOS 构建：
-
-```bash
-# Apple Silicon DMG
-npm run package:mac:arm
-
-# Intel DMG（需要 rustup target add x86_64-apple-darwin）
-npm run package:mac:intel
-
-# Universal DMG（同时需要 aarch64 / x86_64 两个 Rust target）
-npm run package:mac:universal
-```
-
-Windows 安装包建议在 Windows 环境或 GitHub Actions 中构建：
-
-```bash
-npm run package:windows
-```
-
-仓库内置 `.github/workflows/package-installers.yml`。推送 `v*` tag 后会自动构建并发布：
-
-- Windows x64：NSIS `.exe` 安装包
-- macOS Intel：`.dmg`
-- macOS Apple Silicon：`.dmg`
-
-## 项目结构
-
-```
-.
-├── src/                          # React + TS 前端
-│   ├── App.tsx                   # Router + 侧边栏
-│   ├── main.tsx                  # QueryClient + Router provider
-│   ├── components/               # 可复用 UI（SyncStatusCard / RecommendationPanel / Sidebar）
-│   ├── domain/                   # 彩票规则 / 票面数学 / 解析 / 评分 / 推荐 / 回测
-│   ├── lib/                      # IPC + DB 封装
-│   ├── pages/                    # 五个页面：推荐 / 历史 / 回测 / 提示词 / 设置
-│   └── index.css                 # Tailwind + shadcn 设计 token
-├── src-tauri/                    # Rust / Tauri 壳
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   ├── capabilities/default.json
-│   └── src/
-│       ├── lib.rs                # entry，注册 plugin + commands + scheduler
-│       ├── commands.rs           # Tauri IPC commands
-│       ├── db.rs                 # sqlx pool（与 tauri-plugin-sql 共享文件）
-│       ├── sources/              # 官方 + 备用数据源
-│       ├── sync.rs               # 同步服务（抓取 + 降级 + 入库 + sync_runs）
-│       ├── reviews.rs            # 开奖复盘
-│       ├── recommendation.rs     # 推荐存储 + LLM 调用
-│       ├── backtest.rs           # 回测存储 + 导出
-│       ├── prompts.rs            # 提示词默认 + CRUD
-│       ├── settings.rs           # AI 设置
-│       ├── llm.rs                # OpenAI 兼容客户端
-│       ├── scheduler.rs          # 启动 + 周期同步调度
-│       ├── state.rs              # AppState（sqlx pool 句柄）
-│       ├── errors.rs             # 统一错误类型
-│       └── time_utils.rs         # Beijing 时间
-├── vitest.config.ts
-├── vite.config.ts
-├── tailwind.config.js
-├── tsconfig.json
-└── package.json
-```
-
-## 数据存储
-
-- SQLite：`~/Library/Application Support/com.elijah.lottery-lab/lottery_lab.db`
-- 迁移：`src-tauri/src/schema.rs` 中的共享 SQL，由 Rust sqlx pool 和 `tauri-plugin-sql` 共同使用
-- AI Key：macOS Keychain；非密钥设置：`app_settings` 表
-- 提示词：`prompts` 表，首次启动从默认值 seed
-
-## 路线图（已完成）
-
-- PR1 Tauri + React + Vite + Tailwind 骨架
-- PR2 SQLite schema + 彩票领域逻辑 + Vitest
-- PR3 数据同步（reqwest + sqlx + scheduler）
-- PR4 推荐生成 + LLM 调用
-- PR5 开奖复盘
-- PR6 历史回测 + JSON/CSV 导出
-- PR7 提示词 + AI 设置页面
-- PR8 README + 验证 + 打包
-
-## 不做
-
-- 真实代购 / 实际出票
-- 「能提高中奖概率」任何暗示
-- 多用户 / 鉴权 / 云端托管
-- 反反爬虫 / 代理池
-- Windows / Linux / App Store 分发
-- Apple 开发者签名 + 公证（本地自用不值 $99/年）
-- 自动更新
+- [LINUX DO](https://linux.do/)
