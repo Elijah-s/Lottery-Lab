@@ -13,6 +13,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "icons": "node scripts/gen-icons.mjs",
+    "package:mac:arm": "tauri build --bundles dmg --target aarch64-apple-darwin",
+    "package:mac:intel": "tauri build --bundles dmg --target x86_64-apple-darwin",
+    "package:mac:universal": "tauri build --bundles dmg --target universal-apple-darwin",
+    "package:windows": "tauri build --bundles nsis",
     "tauri": "tauri"
   },
   "dependencies": {

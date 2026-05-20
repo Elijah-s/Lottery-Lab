@@ -1,0 +1,89 @@
+name: Package Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            build-args: --target x86_64-pc-windows-msvc --bundles nsis
+            artifact-path: |
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*setup*.exe
+          - name: macos-intel
+            os: macos-15-intel
+            rust-target: x86_64-apple-darwin
+            build-args: --target x86_64-apple-darwin --bundles dmg
+            artifact-path: |
+              src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          - name: macos-apple-silicon
+            os: macos-15
+            rust-target: aarch64-apple-darwin
+            build-args: --target aarch64-apple-darwin --bundles dmg
+            artifact-path: |
+              src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Build installer
+        run: npm run tauri -- build ${{ matrix.build-args }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lottery-Lab-${{ matrix.name }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-artifacts/* \
+            --title "Lottery Lab ${GITHUB_REF_NAME}" \
+            --generate-notes

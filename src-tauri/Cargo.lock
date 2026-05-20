@@ -1954,7 +1954,9 @@ version = "3.0.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "642cff6091872317f458819753386824cfe1473b0de466abf6a36551a0e92ddf"
 dependencies = [
+ "byteorder",
  "security-framework",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

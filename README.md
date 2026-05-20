@@ -1,6 +1,6 @@
 # Lottery Lab
 
-本地彩票分析实验台 — 为 macOS 打包为原生 `.app`，基于 Tauri 2 + React 18 + Vite + TypeScript。
+本地彩票分析实验台 — 支持 macOS / Windows 原生安装包，基于 Tauri 2 + React 18 + Vite + TypeScript。
 
 > 这是本地自用工具，不宣称能提高真实中奖概率。推荐结果是「规则合法 + 启发式排序 + AI 解释」的实验输出。
 
@@ -57,6 +57,33 @@ npm run tauri build
 | `npm run test` | Vitest |
 | `cargo check` (`src-tauri/`) | Rust 类型检查 |
 | `cargo clippy -- -D warnings` (`src-tauri/`) | Rust 严格 lint |
+
+## 安装包构建
+
+本地 macOS 构建：
+
+```bash
+# Apple Silicon DMG
+npm run package:mac:arm
+
+# Intel DMG（需要 rustup target add x86_64-apple-darwin）
+npm run package:mac:intel
+
+# Universal DMG（同时需要 aarch64 / x86_64 两个 Rust target）
+npm run package:mac:universal
+```
+
+Windows 安装包建议在 Windows 环境或 GitHub Actions 中构建：
+
+```bash
+npm run package:windows
+```
+
+仓库内置 `.github/workflows/package-installers.yml`。推送 `v*` tag 后会自动构建并发布：
+
+- Windows x64：NSIS `.exe` 安装包
+- macOS Intel：`.dmg`
+- macOS Apple Silicon：`.dmg`
 
 ## 项目结构
 
