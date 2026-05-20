@@ -1,12 +1,5 @@
-# Pin the C compiler/linker to Apple's toolchain. A shadowing `cc` shim on
-# the user's PATH (e.g. the `@cjh0/cc-cli` Node package installed via
-# Homebrew) is not a real C compiler and breaks every native build script.
-# Using an absolute path here sidesteps the PATH shadow without asking the
-# user to uninstall the shim.
-
-[env]
-CC = "/usr/bin/cc"
-CXX = "/usr/bin/c++"
+# Pin macOS linker selection without setting global CC/CXX. Global compiler
+# environment leaks into Windows CI, where `/usr/bin/cc` does not exist.
 
 [target.aarch64-apple-darwin]
 linker = "/usr/bin/cc"

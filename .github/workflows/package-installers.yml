@@ -12,6 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CI: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -22,7 +23,7 @@ jobs:
       matrix:
         include:
           - name: windows-x64
-            os: windows-latest
+            os: windows-2022
             rust-target: x86_64-pc-windows-msvc
             build-args: --target x86_64-pc-windows-msvc --bundles nsis
             artifact-path: |
