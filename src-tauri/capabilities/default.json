@@ -1,0 +1,24 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the main window.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "sql:allow-load",
+      "allow": [{ "database": "sqlite:lottery_lab.db" }]
+    },
+    {
+      "identifier": "sql:allow-execute",
+      "allow": [{ "database": "sqlite:lottery_lab.db" }]
+    },
+    {
+      "identifier": "sql:allow-select",
+      "allow": [{ "database": "sqlite:lottery_lab.db" }]
+    },
+    {
+      "identifier": "sql:allow-close",
+      "allow": [{ "database": "sqlite:lottery_lab.db" }]
+    }
+  ]
+}

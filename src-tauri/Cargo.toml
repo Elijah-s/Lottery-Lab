@@ -1,0 +1,46 @@
+[package]
+name = "lottery-lab"
+version = "0.1.0"
+description = "Local lottery analysis lab (SSQ / DLT) for macOS."
+authors = ["Elijah-s"]
+edition = "2021"
+rust-version = "1.70"
+
+# The entry point for the Tauri app is the `lottery_lab_lib` library crate
+# (see `src/lib.rs`). `src/main.rs` is a thin wrapper around `run()` so we
+# can share the same entry point with mobile targets in the future.
+[lib]
+name = "lottery_lab_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "brotli"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite", "macros", "chrono"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1"
+anyhow = "1"
+log = "0.4"
+async-trait = "0.1"
+sha2 = "0.10"
+hex = "0.4"
+keyring = { version = "=3.0.0-rc.1", features = ["apple-native"] }
+
+[features]
+# This feature is used for production builds, where `devtools` is disabled.
+# Enabled in the `[profile.release]` / `tauri build` flow by Tauri itself.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

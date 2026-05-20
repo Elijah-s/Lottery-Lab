@@ -1,0 +1,48 @@
+{
+  "productName": "Lottery Lab",
+  "version": "0.1.0",
+  "identifier": "com.elijah.lottery-lab",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Lottery Lab",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "titleBarStyle": "Visible"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "category": "Utility",
+    "copyright": "Copyright © 2026 Elijah. All rights reserved.",
+    "shortDescription": "本地彩票分析实验室。",
+    "longDescription": "彩票实验室是面向双色球和大乐透的本地 macOS 分析工具，支持自然语言需求解析、启发式评分、智能专家解释、开奖复盘和历史回测。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}
