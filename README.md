@@ -1,4 +1,8 @@
-# Lottery Lab
+<p align="center">
+  <img src="docs/readme-icon.svg" width="112" alt="Lottery Lab README 图标">
+</p>
+
+<h1 align="center">Lottery Lab</h1>
 
 Lottery Lab 是一个本地运行的彩票分析实验室，面向「双色球」和「大乐透」场景，提供历史开奖同步、需求化推荐生成、开奖复盘和回测分析等功能。
 
