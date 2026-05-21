@@ -5,7 +5,7 @@
 //! missing official data degrades to analysis-only output instead of
 //! invented betting plans.
 
-use chrono::{Duration, NaiveDate, NaiveTime};
+use chrono::{DateTime, Duration};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -19,6 +19,7 @@ use crate::settings::resolve_llm_config;
 use crate::time_utils::now_beijing_iso;
 
 const FIFA_SCHEDULE_URL: &str = "https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/match-schedule-fixtures-results-teams-stadiums";
+const FIFA_CALENDAR_API_URL: &str = "https://api.fifa.com/api/v3/calendar/matches?language=en&idCompetition=17&idSeason=285023&count=400";
 const SPORTTERY_HOME_URL: &str = "https://www.sporttery.cn/";
 const SPORTTERY_NOTICE_URL: &str = "https://www.sporttery.cn/ctzc/czgg/20260519/10053747.html";
 const DEFAULT_REFRESH_SECONDS: i64 = 3600;
@@ -208,6 +209,7 @@ struct SeedMatch {
     venue: String,
     city: String,
     country: String,
+    source_url: String,
 }
 
 pub async fn sync_worldcup_schedule(
@@ -215,44 +217,67 @@ pub async fn sync_worldcup_schedule(
     client: &Client,
 ) -> AppResult<WorldCupScheduleSync> {
     let fetched_at = now_beijing_iso();
-    let source_status = probe_source(client, "FIFA 官方赛程", "official", FIFA_SCHEDULE_URL).await;
-    let mut status = "ok".to_string();
-    let mut message = "已写入 2026 世界杯 104 场赛程骨架；联网源可访问。".to_string();
-    if let Err(err) = source_status {
-        status = "degraded".to_string();
-        message = format!("已写入 2026 世界杯 104 场赛程骨架；FIFA 页面本次访问失败：{err}");
-        insert_source_health(
-            pool,
-            SourceHealthInsert {
-                source_name: "FIFA 官方赛程",
-                source_level: "official",
-                status: "degraded",
-                message: &message,
-                source_url: Some(FIFA_SCHEDULE_URL),
-                field_coverage: 0.7,
-                failure_rate: 1.0,
-                recommended_refresh_seconds: DEFAULT_REFRESH_SECONDS,
-            },
-        )
-        .await?;
-    } else {
-        insert_source_health(
-            pool,
-            SourceHealthInsert {
-                source_name: "FIFA 官方赛程",
-                source_level: "official",
-                status: "ok",
-                message: "官方赛程页面可访问。",
-                source_url: Some(FIFA_SCHEDULE_URL),
-                field_coverage: 0.7,
-                failure_rate: 0.0,
-                recommended_refresh_seconds: DEFAULT_REFRESH_SECONDS,
-            },
-        )
-        .await?;
-    }
+    let matches = match fetch_fifa_calendar_schedule(client).await {
+        Ok(matches) if matches.len() == 104 => {
+            insert_source_health(
+                pool,
+                SourceHealthInsert {
+                    source_name: "FIFA 官方赛程 API",
+                    source_level: "official",
+                    status: "ok",
+                    message: "已从 FIFA 官方赛程 API 获取 104 场完整赛程。",
+                    source_url: Some(FIFA_CALENDAR_API_URL),
+                    field_coverage: 1.0,
+                    failure_rate: 0.0,
+                    recommended_refresh_seconds: DEFAULT_REFRESH_SECONDS,
+                },
+            )
+            .await?;
+            matches
+        }
+        Ok(matches) => {
+            let message = format!(
+                "FIFA 官方赛程 API 返回 {} 场，不是预期的 104 场；已拒绝写入，避免保存不完整赛程。",
+                matches.len()
+            );
+            insert_source_health(
+                pool,
+                SourceHealthInsert {
+                    source_name: "FIFA 官方赛程 API",
+                    source_level: "official",
+                    status: "degraded",
+                    message: &message,
+                    source_url: Some(FIFA_CALENDAR_API_URL),
+                    field_coverage: matches.len() as f64 / 104.0,
+                    failure_rate: 1.0,
+                    recommended_refresh_seconds: DEFAULT_REFRESH_SECONDS,
+                },
+            )
+            .await?;
+            return Err(AppError::BadResponse(message));
+        }
+        Err(err) => {
+            let message = format!(
+                "FIFA 官方赛程 API 获取失败：{err}。本次未写入占位赛程，请稍后重试。"
+            );
+            insert_source_health(
+                pool,
+                SourceHealthInsert {
+                    source_name: "FIFA 官方赛程 API",
+                    source_level: "official",
+                    status: "degraded",
+                    message: &message,
+                    source_url: Some(FIFA_CALENDAR_API_URL),
+                    field_coverage: 0.0,
+                    failure_rate: 1.0,
+                    recommended_refresh_seconds: DEFAULT_REFRESH_SECONDS,
+                },
+            )
+            .await?;
+            return Err(AppError::Http(message));
+        }
+    };
 
-    let matches = generate_worldcup_2026_schedule()?;
     let mut tx = pool.begin().await?;
     for item in &matches {
         let fifa_match_id = format!("FWC2026-{:03}", item.match_no);
@@ -290,7 +315,7 @@ pub async fn sync_worldcup_schedule(
         .bind(&item.venue)
         .bind(&item.city)
         .bind(&item.country)
-        .bind(FIFA_SCHEDULE_URL)
+        .bind(&item.source_url)
         .bind(&fetched_at)
         .execute(&mut *tx)
         .await?;
@@ -300,10 +325,10 @@ pub async fn sync_worldcup_schedule(
     Ok(WorldCupScheduleSync {
         inserted_or_updated: matches.len(),
         total_matches: matches.len(),
-        source_name: "FIFA 官方赛程".to_string(),
-        source_url: FIFA_SCHEDULE_URL.to_string(),
-        status,
-        message,
+        source_name: "FIFA 官方赛程 API".to_string(),
+        source_url: FIFA_CALENDAR_API_URL.to_string(),
+        status: "ok".to_string(),
+        message: "已从 FIFA 官方赛程 API 同步 104 场完整赛程。".to_string(),
         fetched_at,
     })
 }
@@ -883,23 +908,6 @@ pub async fn cancel_worldcup_queue_job(pool: &SqlitePool, job_id: i64) -> AppRes
     Ok(result.rows_affected() > 0)
 }
 
-async fn probe_source(
-    client: &Client,
-    source_name: &str,
-    _source_level: &str,
-    url: &str,
-) -> AppResult<String> {
-    let response = client.get(url).send().await?;
-    if !response.status().is_success() {
-        return Err(AppError::BadResponse(format!(
-            "{source_name} HTTP {}",
-            response.status()
-        )));
-    }
-    let text = response.text().await?;
-    Ok(text)
-}
-
 struct SourceHealthInsert<'a> {
     source_name: &'a str,
     source_level: &'a str,
@@ -938,169 +946,168 @@ async fn insert_source_health(
     Ok(())
 }
 
-fn generate_worldcup_2026_schedule() -> AppResult<Vec<SeedMatch>> {
-    let venues = [
-        ("Estadio Azteca", "Mexico City", "Mexico"),
-        ("Estadio Guadalajara", "Guadalajara", "Mexico"),
-        ("Estadio Monterrey", "Monterrey", "Mexico"),
-        ("BMO Field", "Toronto", "Canada"),
-        ("BC Place", "Vancouver", "Canada"),
-        ("Lumen Field", "Seattle", "United States"),
-        ("Levi's Stadium", "San Francisco Bay Area", "United States"),
-        ("SoFi Stadium", "Los Angeles", "United States"),
-        ("NRG Stadium", "Houston", "United States"),
-        ("AT&T Stadium", "Dallas", "United States"),
-        ("Arrowhead Stadium", "Kansas City", "United States"),
-        ("Mercedes-Benz Stadium", "Atlanta", "United States"),
-        ("Hard Rock Stadium", "Miami", "United States"),
-        ("Gillette Stadium", "Boston", "United States"),
-        ("Lincoln Financial Field", "Philadelphia", "United States"),
-        ("MetLife Stadium", "New York New Jersey", "United States"),
-    ];
-    let groups = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
-    let pairings = [(1, 2), (3, 4), (1, 3), (2, 4), (4, 1), (2, 3)];
-    let start = NaiveDate::from_ymd_opt(2026, 6, 11)
-        .ok_or_else(|| AppError::Other("invalid world cup start date".to_string()))?;
-    let times = [
-        NaiveTime::from_hms_opt(16, 0, 0).unwrap(),
-        NaiveTime::from_hms_opt(19, 0, 0).unwrap(),
-        NaiveTime::from_hms_opt(22, 0, 0).unwrap(),
-        NaiveTime::from_hms_opt(1, 0, 0).unwrap(),
-    ];
-    let mut out = Vec::with_capacity(104);
-    let mut match_no = 1_i64;
-    for group in groups {
-        for (pair_idx, (home_seed, away_seed)) in pairings.iter().enumerate() {
-            let group_match_index = (match_no - 1) as usize;
-            let day = group_match_index / 4;
-            let time = times[group_match_index % times.len()];
-            let date = start + Duration::days(day as i64);
-            let (venue, city, country) = venues[group_match_index % venues.len()];
-            let (home_team, away_team) = seeded_team_names(group, *home_seed, *away_seed, match_no);
-            out.push(SeedMatch {
-                match_no,
-                stage: "小组赛".to_string(),
-                group_name: Some(format!("Group {group}")),
-                home_team,
-                away_team,
-                kickoff_utc: format!("{}Z", date.and_time(time).format("%Y-%m-%dT%H:%M:%S")),
-                kickoff_beijing: format!(
-                    "{}+08:00",
-                    (date.and_time(time) + Duration::hours(8)).format("%Y-%m-%dT%H:%M:%S")
-                ),
-                venue: venue.to_string(),
-                city: city.to_string(),
-                country: country.to_string(),
-            });
-            match_no += 1;
-            if pair_idx == pairings.len() - 1 {
-                continue;
-            }
-        }
+async fn fetch_fifa_calendar_schedule(client: &Client) -> AppResult<Vec<SeedMatch>> {
+    let payload: serde_json::Value = client
+        .get(FIFA_CALENDAR_API_URL)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let results = payload
+        .get("Results")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| AppError::BadResponse("FIFA 赛程 API 缺少 Results 字段。".to_string()))?;
+    let mut out = Vec::with_capacity(results.len());
+    for item in results {
+        out.push(parse_fifa_calendar_match(item)?);
     }
-
-    add_knockout_round(
-        &mut out,
-        &mut match_no,
-        "32 强",
-        16,
-        NaiveDate::from_ymd_opt(2026, 6, 28).unwrap(),
-        &venues,
-    );
-    add_knockout_round(
-        &mut out,
-        &mut match_no,
-        "16 强",
-        8,
-        NaiveDate::from_ymd_opt(2026, 7, 4).unwrap(),
-        &venues,
-    );
-    add_knockout_round(
-        &mut out,
-        &mut match_no,
-        "8 强",
-        4,
-        NaiveDate::from_ymd_opt(2026, 7, 9).unwrap(),
-        &venues,
-    );
-    add_knockout_round(
-        &mut out,
-        &mut match_no,
-        "半决赛",
-        2,
-        NaiveDate::from_ymd_opt(2026, 7, 14).unwrap(),
-        &venues,
-    );
-    add_knockout_round(
-        &mut out,
-        &mut match_no,
-        "季军赛",
-        1,
-        NaiveDate::from_ymd_opt(2026, 7, 18).unwrap(),
-        &venues,
-    );
-    add_knockout_round(
-        &mut out,
-        &mut match_no,
-        "决赛",
-        1,
-        NaiveDate::from_ymd_opt(2026, 7, 19).unwrap(),
-        &venues,
-    );
+    out.sort_by_key(|item| item.match_no);
+    out.dedup_by_key(|item| item.match_no);
     Ok(out)
 }
 
-fn seeded_team_names(group: &str, home_seed: i32, away_seed: i32, match_no: i64) -> (String, String) {
-    match match_no {
-        1 => ("Mexico".to_string(), "South Africa".to_string()),
-        10 => ("Curacao".to_string(), "Germany".to_string()),
-        _ => (
-            format!("Group {group} Team {home_seed}"),
-            format!("Group {group} Team {away_seed}"),
+fn parse_fifa_calendar_match(item: &serde_json::Value) -> AppResult<SeedMatch> {
+    let match_no = value_i64(item, "MatchNumber").ok_or_else(|| {
+        AppError::BadResponse("FIFA 赛程条目缺少 MatchNumber。".to_string())
+    })?;
+    let id_match = value_str(item, "IdMatch").ok_or_else(|| {
+        AppError::BadResponse(format!("FIFA 第 {match_no} 场缺少 IdMatch。"))
+    })?;
+    let kickoff_utc = value_str(item, "Date").ok_or_else(|| {
+        AppError::BadResponse(format!("FIFA 第 {match_no} 场缺少 Date。"))
+    })?;
+    let kickoff = DateTime::parse_from_rfc3339(kickoff_utc).map_err(|err| {
+        AppError::BadResponse(format!("FIFA 第 {match_no} 场 Date 无法解析：{err}"))
+    })?;
+    let raw_stage =
+        localized_description(item.get("StageName")).unwrap_or_else(|| "未公布阶段".to_string());
+    let stage = translate_stage(&raw_stage);
+    let group_name = localized_description(item.get("GroupName")).map(|group| translate_group(&group));
+    let stadium = item.get("Stadium").unwrap_or(&serde_json::Value::Null);
+    let venue = localized_description(stadium.get("Name")).unwrap_or_else(|| "未公布场馆".to_string());
+    let city = localized_description(stadium.get("CityName")).unwrap_or_else(|| "未公布城市".to_string());
+    let country = value_str(stadium, "IdCountry")
+        .map(country_name)
+        .unwrap_or_else(|| "未公布国家".to_string());
+    let home_team = team_name_or_placeholder(item.get("Home"), item.get("PlaceHolderA"));
+    let away_team = team_name_or_placeholder(item.get("Away"), item.get("PlaceHolderB"));
+    let id_competition = value_str(item, "IdCompetition").unwrap_or("17");
+    let id_season = value_str(item, "IdSeason").unwrap_or("285023");
+    let id_stage = value_str(item, "IdStage").unwrap_or("289273");
+
+    Ok(SeedMatch {
+        match_no,
+        stage,
+        group_name,
+        home_team,
+        away_team,
+        kickoff_utc: kickoff.to_rfc3339(),
+        kickoff_beijing: format!(
+            "{}+08:00",
+            (kickoff + Duration::hours(8)).format("%Y-%m-%dT%H:%M:%S")
         ),
-    }
+        venue,
+        city,
+        country,
+        source_url: format!(
+            "https://www.fifa.com/en/match-centre/match/{id_competition}/{id_season}/{id_stage}/{id_match}"
+        ),
+    })
 }
 
-fn add_knockout_round(
-    out: &mut Vec<SeedMatch>,
-    match_no: &mut i64,
-    stage: &str,
-    count: i64,
-    start: NaiveDate,
-    venues: &[(&str, &str, &str)],
-) {
-    for idx in 0..count {
-        let day = match stage {
-            "32 强" => idx / 3,
-            "16 强" => idx / 2,
-            "8 强" => idx / 2,
-            _ => idx,
-        };
-        let time = if idx % 2 == 0 {
-            NaiveTime::from_hms_opt(20, 0, 0).unwrap()
-        } else {
-            NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-        };
-        let date = start + Duration::days(day);
-        let venue_idx = ((*match_no - 1) as usize) % venues.len();
-        let (venue, city, country) = venues[venue_idx];
-        out.push(SeedMatch {
-            match_no: *match_no,
-            stage: stage.to_string(),
-            group_name: None,
-            home_team: format!("{stage} Slot {}", idx + 1),
-            away_team: format!("{stage} Slot {}", idx + 2),
-            kickoff_utc: format!("{}Z", date.and_time(time).format("%Y-%m-%dT%H:%M:%S")),
-            kickoff_beijing: format!(
-                "{}+08:00",
-                (date.and_time(time) + Duration::hours(8)).format("%Y-%m-%dT%H:%M:%S")
-            ),
-            venue: venue.to_string(),
-            city: city.to_string(),
-            country: country.to_string(),
-        });
-        *match_no += 1;
+fn value_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(|item| item.as_str())
+}
+
+fn value_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+    value
+        .get(key)
+        .and_then(|item| item.as_i64().or_else(|| item.as_str()?.parse::<i64>().ok()))
+}
+
+fn localized_description(value: Option<&serde_json::Value>) -> Option<String> {
+    value?
+        .as_array()?
+        .iter()
+        .find_map(|item| value_str(item, "Description"))
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+}
+
+fn team_name_or_placeholder(
+    team: Option<&serde_json::Value>,
+    placeholder: Option<&serde_json::Value>,
+) -> String {
+    team.and_then(|value| value_str(value, "ShortClubName"))
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .or_else(|| team.and_then(|value| localized_description(value.get("TeamName"))))
+        .or_else(|| placeholder.and_then(|value| value.as_str()).map(format_placeholder))
+        .unwrap_or_else(|| "待官方确认".to_string())
+}
+
+fn format_placeholder(raw: &str) -> String {
+    let value = raw.trim();
+    if let Some(rest) = value.strip_prefix('W') {
+        if rest.chars().all(|ch| ch.is_ascii_digit()) {
+            return format!("第 {rest} 场胜者");
+        }
     }
+    if let Some(rest) = value.strip_prefix('L') {
+        if rest.chars().all(|ch| ch.is_ascii_digit()) {
+            return format!("第 {rest} 场负者");
+        }
+    }
+    let mut chars = value.chars();
+    if let Some(rank) = chars.next().filter(|ch| matches!(ch, '1' | '2' | '3')) {
+        let groups: String = chars.collect();
+        if !groups.is_empty() && groups.chars().all(|ch| ch.is_ascii_uppercase()) {
+            let rank_text = match rank {
+                '1' => "第 1 名",
+                '2' => "第 2 名",
+                _ => "第 3 名",
+            };
+            let group_text = groups
+                .chars()
+                .map(|ch| format!("{ch} 组"))
+                .collect::<Vec<_>>()
+                .join("/");
+            return format!("{group_text}{rank_text}");
+        }
+    }
+    value.to_string()
+}
+
+fn translate_stage(stage: &str) -> String {
+    match stage {
+        "First Stage" => "小组赛",
+        "Round of 32" => "32 强",
+        "Round of 16" => "16 强",
+        "Quarter-final" => "8 强",
+        "Semi-final" => "半决赛",
+        "Play-off for third place" => "季军赛",
+        "Final" => "决赛",
+        other => other,
+    }
+    .to_string()
+}
+
+fn translate_group(group: &str) -> String {
+    group
+        .strip_prefix("Group ")
+        .map(|name| format!("{name} 组"))
+        .unwrap_or_else(|| group.to_string())
+}
+
+fn country_name(code: &str) -> String {
+    match code {
+        "CAN" => "Canada",
+        "MEX" => "Mexico",
+        "USA" => "United States",
+        other => other,
+    }
+    .to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -1405,9 +1412,12 @@ fn build_local_schedule_evidence(match_info: &BasicMatch) -> EvidenceDraft {
     EvidenceDraft {
         category: "schedule".to_string(),
         source_level: "official".to_string(),
-        source_name: "FIFA 官方赛程骨架".to_string(),
+        source_name: "FIFA 官方赛程 API".to_string(),
         url: match_info.source_url.clone(),
-        title: format!("Match {} {} vs {}", match_info.match_no, match_info.home_team, match_info.away_team),
+        title: format!(
+            "第 {} 场 {} vs {}",
+            match_info.match_no, match_info.home_team, match_info.away_team
+        ),
         published_at: None,
         fetched_at: now_beijing_iso(),
         extracted_json: json!({
@@ -1982,11 +1992,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_schedule_has_104_matches() {
-        let schedule = generate_worldcup_2026_schedule().unwrap();
-        assert_eq!(schedule.len(), 104);
-        assert_eq!(schedule.first().unwrap().match_no, 1);
-        assert_eq!(schedule.last().unwrap().match_no, 104);
+    fn parses_fifa_calendar_match_without_placeholders() {
+        let raw = json!({
+            "IdCompetition": "17",
+            "IdSeason": "285023",
+            "IdStage": "289273",
+            "IdMatch": "400021443",
+            "MatchNumber": 1,
+            "Date": "2026-06-11T19:00:00Z",
+            "StageName": [{"Locale": "en-GB", "Description": "First Stage"}],
+            "GroupName": [{"Locale": "en-GB", "Description": "Group A"}],
+            "Home": {
+                "ShortClubName": "Mexico",
+                "TeamName": [{"Locale": "en-GB", "Description": "Mexico"}]
+            },
+            "Away": {
+                "ShortClubName": "South Africa",
+                "TeamName": [{"Locale": "en-GB", "Description": "South Africa"}]
+            },
+            "Stadium": {
+                "Name": [{"Locale": "en-GB", "Description": "Mexico City Stadium"}],
+                "CityName": [{"Locale": "en-GB", "Description": "Mexico City"}],
+                "IdCountry": "MEX"
+            }
+        });
+        let parsed = parse_fifa_calendar_match(&raw).unwrap();
+        assert_eq!(parsed.match_no, 1);
+        assert_eq!(parsed.stage, "小组赛");
+        assert_eq!(parsed.group_name.as_deref(), Some("A 组"));
+        assert_eq!(parsed.home_team, "Mexico");
+        assert_eq!(parsed.away_team, "South Africa");
+        assert_eq!(parsed.kickoff_beijing, "2026-06-12T03:00:00+08:00");
+        assert!(parsed.source_url.ends_with("/400021443"));
+    }
+
+    #[test]
+    fn formats_official_knockout_placeholders() {
+        assert_eq!(format_placeholder("W73"), "第 73 场胜者");
+        assert_eq!(format_placeholder("L101"), "第 101 场负者");
+        assert_eq!(format_placeholder("2A"), "A 组第 2 名");
+        assert_eq!(format_placeholder("3DEIJL"), "D 组/E 组/I 组/J 组/L 组第 3 名");
     }
 
     #[test]
