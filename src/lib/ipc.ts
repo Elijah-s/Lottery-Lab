@@ -122,6 +122,17 @@ export interface RecommendationInputPayload {
   history_window_size: number;
   validated_history_count: number;
   latest_issue: string;
+  candidate_pool?: LlmCandidatePayload[];
+}
+
+export interface LlmCandidatePayload {
+  id: string;
+  ticket: Record<string, unknown>;
+  amount: number;
+  formatted: string;
+  score: number;
+  breakdown: Record<string, unknown>;
+  strategy: string;
 }
 
 export interface PromptRecord {

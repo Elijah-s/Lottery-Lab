@@ -5,8 +5,8 @@
  * 1. User types a free-form request ("双色球 20 元稳一点").
  * 2. TS layer parses it into a `ParsedRequest`.
  * 3. Pulls validated history from SQLite via `list_draws`.
- * 4. Generates ranked candidates (`generateCandidates`).
- * 5. Ships the top candidate + context to Rust for LLM-backed analysis.
+ * 4. Generates a multi-strategy ranked candidate pool.
+ * 5. Ships the pool + context to Rust for LLM-backed selection and analysis.
  * 6. Persisted recommendation comes back and renders inline.
  */
 
@@ -17,7 +17,7 @@ import { useEffect, useState } from "react";
 import { getRuleVersion } from "@/domain/lotteryRules";
 import { parseUserRequest, type ParsedRequest } from "@/domain/parsing";
 import {
-  generateCandidates,
+  generateLlmCandidateBundle,
   type CandidateBundle,
 } from "@/domain/recommendation";
 import {
@@ -31,6 +31,7 @@ import {
   createRecommendation,
   listDraws,
   type DrawDto,
+  type LlmCandidatePayload,
   type RecommendationOutput,
 } from "@/lib/ipc";
 import { toneLabel } from "@/lib/labels";
@@ -286,7 +287,7 @@ async function runPipeline(rawText: string): Promise<RecommendationOutput> {
     );
   }
 
-  const bundle = generateCandidates(parsed, history);
+  const bundle = generateLlmCandidateBundle(parsed, history);
   return submitToRust(parsed, history, bundle);
 }
 
@@ -314,18 +315,16 @@ async function submitToRust(
   bundle: CandidateBundle,
 ): Promise<RecommendationOutput> {
   const rule = getRuleVersion(parsed.lotteryType);
-  const recommendedNumbers = ticketToPayload(bundle.topCandidate.ticket);
+  const candidatePool = bundle.candidates.map(toCandidatePayload);
+  const localTop = candidatePool[0];
+  const recommendedNumbers = localTop.ticket;
   const candidateSnapshot = {
     strategy: bundle.strategy,
+    local_top_id: localTop.id,
     top_score: bundle.topCandidate.scoreSnapshot.score,
-    candidate_count: bundle.candidates.length,
-    top_candidates: bundle.candidates.map((candidate) => ({
-      ticket: ticketToPayload(candidate.ticket),
-      amount: candidate.amount,
-      formatted: candidate.formatted,
-      score: candidate.scoreSnapshot.score,
-      breakdown: candidate.scoreSnapshot.breakdown,
-    })),
+    candidate_count: candidatePool.length,
+    candidate_pool: candidatePool,
+    top_candidates: candidatePool.slice(0, 8),
     rule_version: rule.ruleVersion,
   };
 
@@ -338,9 +337,9 @@ async function submitToRust(
     rules_version: rule.ruleVersion,
     user_request: parsed.rawRequest,
     parsed_request: parsedToPayload(parsed),
-    ticket_text: bundle.topCandidate.formatted,
-    stake_amount: bundle.topCandidate.amount,
-    heuristic_score: bundle.topCandidate.scoreSnapshot.score,
+    ticket_text: localTop.formatted,
+    stake_amount: localTop.amount,
+    heuristic_score: localTop.score,
     recommended_numbers: recommendedNumbers,
     candidate_snapshot: candidateSnapshot,
     history_summary: historySummary,
@@ -348,7 +347,27 @@ async function submitToRust(
     history_window_size: bundle.historyWindowSize,
     validated_history_count: bundle.validatedHistoryCount,
     latest_issue: latestIssue,
+    candidate_pool: candidatePool,
   });
+}
+
+function toCandidatePayload(
+  candidate: CandidateBundle["candidates"][number],
+  index: number,
+): LlmCandidatePayload {
+  return {
+    id: formatCandidateId(index),
+    ticket: ticketToPayload(candidate.ticket),
+    amount: candidate.amount,
+    formatted: candidate.formatted,
+    score: candidate.scoreSnapshot.score,
+    breakdown: candidate.scoreSnapshot.breakdown,
+    strategy: candidate.scoreSnapshot.strategy,
+  };
+}
+
+function formatCandidateId(index: number): string {
+  return `C${String(index + 1).padStart(3, "0")}`;
 }
 
 function parsedToPayload(parsed: ParsedRequest): Record<string, unknown> {
@@ -390,10 +409,10 @@ function buildHistorySummary(
       secondary: summarizeProfile(buildFrequencyProfile(history, secondaryArea)),
     },
     candidate_evidence: {
-      selected_ticket: bundle.topCandidate.formatted,
-      selected_score: bundle.topCandidate.scoreSnapshot.score,
-      score_breakdown: bundle.topCandidate.scoreSnapshot.breakdown,
-      compared_candidates: bundle.candidates.slice(0, 5).map((candidate) => ({
+      local_top_ticket: bundle.topCandidate.formatted,
+      local_top_score: bundle.topCandidate.scoreSnapshot.score,
+      local_score_breakdown: bundle.topCandidate.scoreSnapshot.breakdown,
+      compared_candidates: bundle.candidates.slice(0, 8).map((candidate) => ({
         ticket: candidate.formatted,
         amount: candidate.amount,
         score: candidate.scoreSnapshot.score,

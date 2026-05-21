@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseUserRequest } from "@/domain/parsing";
-import { generateCandidates } from "@/domain/recommendation";
+import {
+  generateCandidates,
+  generateLlmCandidateBundle,
+} from "@/domain/recommendation";
 import type { DrawRecord } from "@/domain/scoring";
 
 function pickUnique(start: number, count: number, max: number, step: number): number[] {
@@ -33,5 +36,17 @@ describe("generateCandidates", () => {
     expect(bundle.topCandidate.amount).toBeLessThanOrEqual(parsed.budget);
     expect(bundle.topCandidate.formatted).toContain("追加");
     expect(bundle.candidates.length).toBeGreaterThan(0);
+  });
+
+  it("builds a multi-strategy candidate pool for LLM selection", () => {
+    const parsed = parseUserRequest("大乐透 30 元 追加 激进");
+    const bundle = generateLlmCandidateBundle(parsed, makeDltHistory(140));
+    const strategies = new Set(
+      bundle.candidates.map((candidate) => candidate.scoreSnapshot.strategy),
+    );
+
+    expect(bundle.candidates.length).toBeGreaterThan(5);
+    expect(strategies.size).toBeGreaterThan(1);
+    expect(bundle.topCandidate.amount).toBeLessThanOrEqual(parsed.budget);
   });
 });

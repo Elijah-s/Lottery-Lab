@@ -6,7 +6,7 @@
  * tickets. No randomness beyond a seeded RNG — same input, same output,
  * which makes debugging and backtesting reproducible.
  *
- * The LLM explanation step is handled separately (Rust side, PR4/7).
+ * The LLM selection and explanation step is handled separately on Rust side.
  */
 
 import {
@@ -53,6 +53,9 @@ const MIN_HISTORY_REQUIRED = 100;
 const MAX_STRUCTURES = 10;
 const CANDIDATES_PER_STRUCTURE = 8;
 const TOP_KEEP = 5;
+const LLM_STRATEGIES: StrategyName[] = ["balanced", "anti_popular", "recency_fade"];
+const LLM_KEEP_PER_STRATEGY = 12;
+const LLM_POOL_KEEP = 24;
 
 /**
  * Deterministic RNG (xorshift32) so seed → output is stable.
@@ -93,6 +96,7 @@ export function generateCandidates(
   options: {
     strategy?: StrategyName;
     drawDate?: Date;
+    keep?: number;
   } = {},
 ): CandidateBundle {
   if (history.length < MIN_HISTORY_REQUIRED) {
@@ -150,7 +154,8 @@ export function generateCandidates(
     throw new Error("当前预算与玩法组合下没有生成合法候选，请调大预算或换玩法。");
   }
 
-  const top = candidates.slice(0, TOP_KEEP);
+  const keep = Math.max(1, options.keep ?? TOP_KEEP);
+  const top = candidates.slice(0, keep);
   return {
     strategy,
     ruleVersion: rule.ruleVersion,
@@ -159,6 +164,53 @@ export function generateCandidates(
     validatedHistoryCount: history.length,
     topCandidate: top[0],
     candidates: top,
+  };
+}
+
+export function generateLlmCandidateBundle(
+  request: ParsedRequest,
+  history: readonly DrawRecord[],
+): CandidateBundle {
+  const preferredStrategy = strategyFromTone(request.tone);
+  const strategies = [
+    preferredStrategy,
+    ...LLM_STRATEGIES.filter((strategy) => strategy !== preferredStrategy),
+  ];
+  const bundles = strategies.map((strategy) =>
+    generateCandidates(request, history, {
+      strategy,
+      keep: LLM_KEEP_PER_STRATEGY,
+    }),
+  );
+  const seen = new Set<string>();
+  const candidates = bundles
+    .flatMap((bundle) => bundle.candidates)
+    .filter((candidate) => {
+      if (seen.has(candidate.formatted)) return false;
+      seen.add(candidate.formatted);
+      return true;
+    })
+    .sort((a, b) => {
+      if (b.scoreSnapshot.score !== a.scoreSnapshot.score) {
+        return b.scoreSnapshot.score - a.scoreSnapshot.score;
+      }
+      return b.amount - a.amount;
+    })
+    .slice(0, LLM_POOL_KEEP);
+
+  if (candidates.length === 0) {
+    throw new Error("当前预算与玩法组合下没有生成合法候选，请调大预算或换玩法。");
+  }
+
+  const base = bundles[0];
+  return {
+    strategy: preferredStrategy,
+    ruleVersion: base.ruleVersion,
+    targetIssue: base.targetIssue,
+    historyWindowSize: base.historyWindowSize,
+    validatedHistoryCount: base.validatedHistoryCount,
+    topCandidate: candidates[0],
+    candidates,
   };
 }
 
