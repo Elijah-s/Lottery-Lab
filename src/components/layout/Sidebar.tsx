@@ -1,4 +1,6 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { NavLink } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   History,
@@ -24,6 +26,22 @@ const NAV_ITEMS: readonly NavItem[] = [
 ];
 
 export function Sidebar(): JSX.Element {
+  const [version, setVersion] = useState<string>("");
+
+  useEffect(() => {
+    let active = true;
+    getVersion()
+      .then((value) => {
+        if (active) setVersion(value);
+      })
+      .catch(() => {
+        if (active) setVersion("");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col border-r border-border bg-card/40">
       <div className="px-5 py-6">
@@ -52,7 +70,7 @@ export function Sidebar(): JSX.Element {
         ))}
       </nav>
       <div className="px-5 py-4 text-[11px] text-muted-foreground">
-        版本 0.1.0 · 本地版
+        {version ? `版本 ${version} · 本地版` : "本地版"}
       </div>
     </aside>
   );

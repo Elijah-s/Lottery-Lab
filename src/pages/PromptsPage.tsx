@@ -1,5 +1,5 @@
 /**
- * Prompt editor for the three expert roles.
+ * Prompt editor for the recommendation system roles.
  *
  * Prompts are seeded with defaults on first launch (Rust side) and the
  * UI here simply lets the user edit and save changes back to SQLite.
@@ -18,19 +18,32 @@ import {
 import { cn } from "@/lib/utils";
 
 const ROLE_META: Record<string, { label: string; hint: string }> = {
+  selection_director: {
+    label: "选号总控",
+    hint: "从候选池中选择最终候选 ID，结合历史摘要和复盘反馈。",
+  },
   lottery_expert: {
     label: "彩票专家",
-    hint: "从彩票规则、历史冷热号角度给出解释。",
+    hint: "从彩票规则、历史冷热号角度评估候选池。",
   },
   math_expert: {
     label: "数学专家",
-    hint: "评估期望收益、方差、统计假设。",
+    hint: "评估候选分布、方差、覆盖区间和统计假设。",
   },
   modeler: {
     label: "建模师",
     hint: "关注数据质量、策略偏差和可改进点。",
   },
 };
+
+const RUNTIME_PROMPT_PREVIEW = `每次生成推荐时，系统会自动把以下运行时上下文拼入用户消息：
+
+1. 用户自然语言需求、彩种、目标期号、偏好策略。
+2. 多策略候选池：候选 ID、票面、金额、本地评分、评分拆解、策略来源。
+3. 历史开奖统计摘要：最近 5 期、冷热号、遗漏、候选对比依据。
+4. 历史推荐复盘反馈：已复盘样本数、平均命中、命中分布、各策略表现、LLM 覆盖本地最高分后的表现。
+
+模型必须只返回 JSON，并且 selected_id 必须来自候选池；最终号码由本地按候选 ID 回填和校验。`;
 
 export function PromptsPage(): JSX.Element {
   const queryClient = useQueryClient();
@@ -76,9 +89,21 @@ export function PromptsPage(): JSX.Element {
       <header>
         <h2 className="text-2xl font-semibold tracking-tight">提示词</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          自定义三位智能专家角色的系统提示。保存后下一次推荐即生效。
+          自定义智能选号角色的系统提示。保存后下一次推荐即生效。
         </p>
       </header>
+
+      <section className="space-y-2 rounded-lg border border-border bg-card/40 p-4">
+        <header>
+          <h3 className="text-base font-semibold">运行时选号上下文</h3>
+          <p className="text-xs text-muted-foreground">
+            这部分随每次推荐动态生成，只读展示，不能手动保存。
+          </p>
+        </header>
+        <pre className="whitespace-pre-wrap rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-muted-foreground">
+          {RUNTIME_PROMPT_PREVIEW}
+        </pre>
+      </section>
 
       {promptsQuery.isLoading ? (
         <p className="text-sm text-muted-foreground">加载中…</p>
