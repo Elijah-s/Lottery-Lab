@@ -1,6 +1,6 @@
 [package]
 name = "lottery-lab"
-version = "0.1.3"
+version = "0.2.0"
 description = "Local lottery analysis lab (SSQ / DLT) for macOS."
 authors = ["Elijah-s"]
 edition = "2021"

@@ -16,6 +16,11 @@ use crate::reviews::{self, ReviewDto};
 use crate::settings::{self, AiSettings, AiSettingsInput};
 use crate::state::AppState;
 use crate::sync::{SyncService, SyncSummary, DEFAULT_LOOKBACK};
+use crate::worldcup::{
+    self, BudgetPlanDto, BudgetPlanInput, EvidenceItemDto, OddsSyncSummary,
+    PreMatchIntelligenceInput, PredictionInput, PredictionRunDto, QueueJobDto, ResearchRunDto,
+    SourceHealthDto, WorldCupMatchDetailDto, WorldCupMatchDto, WorldCupScheduleSync,
+};
 
 fn build_http_client() -> Client {
     Client::builder()
@@ -416,4 +421,102 @@ pub async fn test_llm_connection(
         model: config.model,
         message,
     })
+}
+
+// --- World Cup -------------------------------------------------------------
+
+#[tauri::command]
+pub async fn sync_worldcup_schedule(
+    state: State<'_, AppState>,
+) -> AppResult<WorldCupScheduleSync> {
+    let client = build_http_client();
+    worldcup::sync_worldcup_schedule(&state.pool, &client).await
+}
+
+#[tauri::command]
+pub async fn list_worldcup_matches(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<WorldCupMatchDto>> {
+    worldcup::list_worldcup_matches(&state.pool).await
+}
+
+#[tauri::command]
+pub async fn get_worldcup_match_detail(
+    state: State<'_, AppState>,
+    match_id: i64,
+) -> AppResult<WorldCupMatchDetailDto> {
+    worldcup::get_worldcup_match_detail(&state.pool, match_id).await
+}
+
+#[tauri::command]
+pub async fn fetch_pre_match_intelligence(
+    state: State<'_, AppState>,
+    input: PreMatchIntelligenceInput,
+) -> AppResult<ResearchRunDto> {
+    let client = build_http_client();
+    worldcup::fetch_pre_match_intelligence(&state.pool, &client, input).await
+}
+
+#[tauri::command]
+pub async fn list_match_evidence(
+    state: State<'_, AppState>,
+    match_id: i64,
+) -> AppResult<Vec<EvidenceItemDto>> {
+    worldcup::list_match_evidence(&state.pool, match_id).await
+}
+
+#[tauri::command]
+pub async fn run_match_prediction(
+    state: State<'_, AppState>,
+    input: PredictionInput,
+) -> AppResult<PredictionRunDto> {
+    let client = build_http_client();
+    worldcup::run_match_prediction(&state.pool, &client, input).await
+}
+
+#[tauri::command]
+pub async fn sync_sporttery_worldcup_odds(
+    state: State<'_, AppState>,
+) -> AppResult<OddsSyncSummary> {
+    let client = build_http_client();
+    worldcup::sync_sporttery_worldcup_odds(&state.pool, &client).await
+}
+
+#[tauri::command]
+pub async fn sync_reference_odds_sources(
+    state: State<'_, AppState>,
+) -> AppResult<OddsSyncSummary> {
+    worldcup::sync_reference_odds_sources(&state.pool).await
+}
+
+#[tauri::command]
+pub async fn create_worldcup_budget_plan(
+    state: State<'_, AppState>,
+    input: BudgetPlanInput,
+) -> AppResult<BudgetPlanDto> {
+    worldcup::create_worldcup_budget_plan(&state.pool, input).await
+}
+
+#[tauri::command]
+pub async fn list_worldcup_source_health(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> AppResult<Vec<SourceHealthDto>> {
+    worldcup::list_worldcup_source_health(&state.pool, limit.unwrap_or(12)).await
+}
+
+#[tauri::command]
+pub async fn list_worldcup_queue_jobs(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> AppResult<Vec<QueueJobDto>> {
+    worldcup::list_worldcup_queue_jobs(&state.pool, limit.unwrap_or(20)).await
+}
+
+#[tauri::command]
+pub async fn cancel_worldcup_queue_job(
+    state: State<'_, AppState>,
+    job_id: i64,
+) -> AppResult<bool> {
+    worldcup::cancel_worldcup_queue_job(&state.pool, job_id).await
 }

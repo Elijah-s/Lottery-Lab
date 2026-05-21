@@ -87,6 +87,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           shopt -s nullglob
+          for file in release-artifacts/*; do
+            normalized="release-artifacts/$(basename "$file" | tr ' ' '.')"
+            if [ "$file" != "$normalized" ]; then
+              mv "$file" "$normalized"
+            fi
+          done
+
           files=(release-artifacts/*)
 
           if [ "${#files[@]}" -eq 0 ]; then

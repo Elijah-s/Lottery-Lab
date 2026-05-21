@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   History,
   FlaskConical,
+  Trophy,
   MessageSquareText,
   Settings,
   type LucideIcon,
@@ -21,6 +22,7 @@ const NAV_ITEMS: readonly NavItem[] = [
   { to: "/", label: "推荐", icon: LayoutDashboard },
   { to: "/history", label: "历史", icon: History },
   { to: "/backtests", label: "回测", icon: FlaskConical },
+  { to: "/worldcup", label: "世界杯", icon: Trophy },
   { to: "/prompts", label: "提示词", icon: MessageSquareText },
   { to: "/settings", label: "设置", icon: Settings },
 ];

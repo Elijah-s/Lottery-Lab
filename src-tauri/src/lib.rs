@@ -23,6 +23,7 @@ mod sources;
 mod state;
 mod sync;
 mod time_utils;
+mod worldcup;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -83,6 +84,18 @@ pub fn run() {
             commands::save_ai_settings,
             commands::list_llm_models,
             commands::test_llm_connection,
+            commands::sync_worldcup_schedule,
+            commands::list_worldcup_matches,
+            commands::get_worldcup_match_detail,
+            commands::fetch_pre_match_intelligence,
+            commands::list_match_evidence,
+            commands::run_match_prediction,
+            commands::sync_sporttery_worldcup_odds,
+            commands::sync_reference_odds_sources,
+            commands::create_worldcup_budget_plan,
+            commands::list_worldcup_source_health,
+            commands::list_worldcup_queue_jobs,
+            commands::cancel_worldcup_queue_job,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -171,6 +171,148 @@ export interface LlmConnectionTest {
   message: string;
 }
 
+export interface WorldCupMatchDto {
+  id: number;
+  fifa_match_id: string;
+  match_no: number;
+  stage: string;
+  group_name: string | null;
+  home_team: string;
+  away_team: string;
+  kickoff_utc: string;
+  kickoff_beijing: string;
+  venue: string;
+  city: string;
+  country: string;
+  status: string;
+  result: string | null;
+  source_url: string;
+  updated_at: string;
+  intelligence_count: number;
+  latest_prediction_id: number | null;
+  latest_plan_id: number | null;
+}
+
+export interface WorldCupScheduleSync {
+  inserted_or_updated: number;
+  total_matches: number;
+  source_name: string;
+  source_url: string;
+  status: string;
+  message: string;
+  fetched_at: string;
+}
+
+export interface SourceHealthDto {
+  id: number;
+  source_name: string;
+  source_level: string;
+  status: string;
+  message: string | null;
+  source_url: string | null;
+  fetched_at: string;
+  field_coverage: number;
+  failure_rate: number;
+  recommended_refresh_seconds: number;
+}
+
+export interface EvidenceItemDto {
+  id: number;
+  research_run_id: number;
+  match_id: number;
+  category: string;
+  source_level: string;
+  source_name: string;
+  url: string;
+  title: string;
+  published_at: string | null;
+  fetched_at: string;
+  extracted_json: Record<string, unknown>;
+  raw_hash: string;
+  credibility: number;
+  rule_check_json: Record<string, unknown>;
+  accepted_by_rule: boolean;
+  audit_status: string;
+}
+
+export interface ResearchRunDto {
+  id: number;
+  match_id: number;
+  trigger_type: string;
+  research_model_profile: Record<string, unknown>;
+  search_plan_json: Record<string, unknown>;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  evidence_bundle_hash: string;
+  estimated_cost: number;
+  actual_cost: number;
+  evidence_count: number;
+  accepted_count: number;
+}
+
+export interface PredictionRunDto {
+  id: number;
+  match_id: number;
+  research_run_id: number | null;
+  model_profile: Record<string, unknown>;
+  prompt_revision: number;
+  evidence_bundle_hash: string;
+  local_probability: Record<string, number>;
+  llm_probability: Record<string, number>;
+  market_probability: Record<string, number>;
+  final_probability: Record<string, number>;
+  scoreline_distribution: Array<Record<string, unknown>>;
+  confidence: number;
+  disagreement_score: number;
+  analysis_markdown: string;
+  created_at: string;
+}
+
+export interface BudgetPlanDto {
+  id: number;
+  match_id: number;
+  prediction_run_id: number | null;
+  odds_snapshot_id: number | null;
+  planning_mode: "official" | "reference_only" | "analysis_only" | string;
+  budget: number;
+  risk_mode: string;
+  plan_json: Record<string, unknown>;
+  expected_value: number;
+  max_loss: number;
+  status: string;
+  created_at: string;
+}
+
+export interface WorldCupMatchDetailDto {
+  match_info: WorldCupMatchDto;
+  evidence: EvidenceItemDto[];
+  predictions: PredictionRunDto[];
+  budget_plans: BudgetPlanDto[];
+  source_health: SourceHealthDto[];
+}
+
+export interface OddsSyncSummary {
+  source_name: string;
+  source_level: string;
+  status: string;
+  message: string;
+  events_found: number;
+  odds_found: number;
+  fetched_at: string;
+}
+
+export interface QueueJobDto {
+  id: number;
+  job_type: string;
+  status: string;
+  payload_json: Record<string, unknown>;
+  estimated_cost: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface BacktestRunDto {
   id: number;
   lottery_type: LotteryType;
@@ -307,4 +449,70 @@ export function listLlmModels(): Promise<LlmModelList> {
 
 export function testLlmConnection(): Promise<LlmConnectionTest> {
   return invoke<LlmConnectionTest>("test_llm_connection");
+}
+
+export function syncWorldCupSchedule(): Promise<WorldCupScheduleSync> {
+  return invoke<WorldCupScheduleSync>("sync_worldcup_schedule");
+}
+
+export function listWorldCupMatches(): Promise<WorldCupMatchDto[]> {
+  return invoke<WorldCupMatchDto[]>("list_worldcup_matches");
+}
+
+export function getWorldCupMatchDetail(
+  matchId: number,
+): Promise<WorldCupMatchDetailDto> {
+  return invoke<WorldCupMatchDetailDto>("get_worldcup_match_detail", {
+    matchId,
+  });
+}
+
+export function fetchPreMatchIntelligence(input: {
+  match_id: number;
+  query?: string;
+  trigger_type?: string;
+}): Promise<ResearchRunDto> {
+  return invoke<ResearchRunDto>("fetch_pre_match_intelligence", { input });
+}
+
+export function listMatchEvidence(matchId: number): Promise<EvidenceItemDto[]> {
+  return invoke<EvidenceItemDto[]>("list_match_evidence", { matchId });
+}
+
+export function runMatchPrediction(input: {
+  match_id: number;
+  research_run_id?: number | null;
+}): Promise<PredictionRunDto> {
+  return invoke<PredictionRunDto>("run_match_prediction", { input });
+}
+
+export function syncSportteryWorldCupOdds(): Promise<OddsSyncSummary> {
+  return invoke<OddsSyncSummary>("sync_sporttery_worldcup_odds");
+}
+
+export function syncReferenceOddsSources(): Promise<OddsSyncSummary> {
+  return invoke<OddsSyncSummary>("sync_reference_odds_sources");
+}
+
+export function createWorldCupBudgetPlan(input: {
+  match_id: number;
+  prediction_run_id?: number | null;
+  budget?: number;
+  risk_mode?: string;
+}): Promise<BudgetPlanDto> {
+  return invoke<BudgetPlanDto>("create_worldcup_budget_plan", { input });
+}
+
+export function listWorldCupSourceHealth(
+  limit?: number,
+): Promise<SourceHealthDto[]> {
+  return invoke<SourceHealthDto[]>("list_worldcup_source_health", { limit });
+}
+
+export function listWorldCupQueueJobs(limit?: number): Promise<QueueJobDto[]> {
+  return invoke<QueueJobDto[]>("list_worldcup_queue_jobs", { limit });
+}
+
+export function cancelWorldCupQueueJob(jobId: number): Promise<boolean> {
+  return invoke<boolean>("cancel_worldcup_queue_job", { jobId });
 }

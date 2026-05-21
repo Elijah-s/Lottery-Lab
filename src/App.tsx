@@ -5,6 +5,7 @@ import { HistoryPage } from "@/pages/HistoryPage";
 import { BacktestsPage } from "@/pages/BacktestsPage";
 import { PromptsPage } from "@/pages/PromptsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { WorldCupPage } from "@/pages/WorldCupPage";
 
 export default function App(): JSX.Element {
   return (
@@ -16,6 +17,7 @@ export default function App(): JSX.Element {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/backtests" element={<BacktestsPage />} />
+            <Route path="/worldcup" element={<WorldCupPage />} />
             <Route path="/prompts" element={<PromptsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
