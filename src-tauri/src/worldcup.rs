@@ -15,11 +15,11 @@ use sqlx::{Row, SqlitePool};
 use crate::errors::{AppError, AppResult};
 use crate::llm::{self, ChatMessage};
 use crate::prompts::list_prompts;
-use crate::settings::resolve_llm_config;
+use crate::settings::{resolve_llm_config_for, LlmProfileKind};
 use crate::time_utils::now_beijing_iso;
 
 const FIFA_SCHEDULE_URL: &str = "https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/articles/match-schedule-fixtures-results-teams-stadiums";
-const FIFA_CALENDAR_API_URL: &str = "https://api.fifa.com/api/v3/calendar/matches?language=en&idCompetition=17&idSeason=285023&count=400";
+const FIFA_CALENDAR_API_URL: &str = "https://api.fifa.com/api/v3/calendar/matches?language=zh-CN&idCompetition=17&idSeason=285023&count=400";
 const SPORTTERY_HOME_URL: &str = "https://www.sporttery.cn/";
 const SPORTTERY_NOTICE_URL: &str = "https://www.sporttery.cn/ctzc/czgg/20260519/10053747.html";
 const DEFAULT_REFRESH_SECONDS: i64 = 3600;
@@ -418,7 +418,7 @@ pub async fn fetch_pre_match_intelligence(
     let trigger_type = input
         .trigger_type
         .unwrap_or_else(|| "manual_pre_match".to_string());
-    let model_profile = resolve_model_profile(pool).await;
+    let model_profile = resolve_model_profile(pool, LlmProfileKind::WorldCupResearch).await;
     let search_plan = build_search_plan(client, pool, &match_info, input.query.as_deref()).await;
     let search_plan_json = serde_json::to_string(&search_plan)?;
 
@@ -602,7 +602,7 @@ pub async fn run_match_prediction(
         .map(|id| format!("research:{id}"))
         .unwrap_or_else(|| hash_text(&format!("{:?}", accepted.iter().map(|e| e.id).collect::<Vec<_>>())));
     let analysis_markdown = format!(
-        "### 比赛模拟\n{} vs {}\n\n{}\n\n### 概率结论\n胜：{}% · 平：{}% · 负：{}%\n\n### 风险提示\n足球比赛受阵容、临场状态和赔率变化影响，本结果仅为本地分析模拟，不构成购彩建议。",
+        "### 比赛模拟\n{} 对阵 {}\n\n{}\n\n### 概率结论\n胜：{}% · 平：{}% · 负：{}%\n\n### 风险提示\n足球比赛受阵容、临场状态和赔率变化影响，本结果仅为本地分析模拟，不构成购彩建议。",
         match_info.home_team,
         match_info.away_team,
         llm_markdown,
@@ -643,18 +643,24 @@ pub async fn run_match_prediction(
 
 pub async fn create_worldcup_budget_plan(
     pool: &SqlitePool,
+    client: &Client,
     input: BudgetPlanInput,
 ) -> AppResult<BudgetPlanDto> {
     let prediction_id = match input.prediction_run_id {
         Some(id) => Some(id),
         None => latest_prediction_id(pool, input.match_id).await?,
     };
+    let match_info = get_basic_match(pool, input.match_id).await?;
+    let prediction = match prediction_id {
+        Some(id) => Some(get_prediction(pool, id).await?),
+        None => None,
+    };
     let budget = input.budget.unwrap_or(100.0).clamp(0.0, 100_000.0);
     let risk_mode = input.risk_mode.unwrap_or_else(|| "balanced".to_string());
     let odds = latest_valid_odds(pool, input.match_id).await?;
-    let (planning_mode, odds_snapshot_id, plan_json, expected_value, max_loss, status) =
+    let (planning_mode, odds_snapshot_id, mut plan_json, expected_value, max_loss, status) =
         match odds {
-            Some(snapshot) if snapshot.source_level == "official" => {
+            Some(ref snapshot) if snapshot.source_level == "official" => {
                 let allocation = safe_allocation(budget, &risk_mode);
                 (
                     "official".to_string(),
@@ -673,7 +679,7 @@ pub async fn create_worldcup_budget_plan(
                     "ready".to_string(),
                 )
             }
-            Some(snapshot) if snapshot.source_level == "verified_mirror" => {
+            Some(ref snapshot) if snapshot.source_level == "verified_mirror" => {
                 let allocation = safe_allocation(budget, &risk_mode);
                 (
                     "reference_only".to_string(),
@@ -706,6 +712,31 @@ pub async fn create_worldcup_budget_plan(
                 "analysis_only".to_string(),
             ),
         };
+    let budget_context = BudgetNarrativeContext {
+        match_info: &match_info,
+        prediction: prediction.as_ref(),
+        odds: odds.as_ref(),
+        planning_mode: &planning_mode,
+        budget,
+        risk_mode: &risk_mode,
+        expected_value,
+        max_loss,
+    };
+    let (budget_model_profile, narrative_markdown) =
+        match try_llm_budget_narrative(client, pool, &budget_context).await {
+        Ok(value) => value,
+        Err(err) => (
+            json!({ "mode": "local_fallback", "reason": err.to_string() }),
+            local_budget_narrative(&budget_context),
+        ),
+    };
+    if let Some(object) = plan_json.as_object_mut() {
+        object.insert(
+            "narrative_markdown".to_string(),
+            serde_json::Value::String(narrative_markdown),
+        );
+        object.insert("model_profile".to_string(), budget_model_profile);
+    }
     let created_at = now_beijing_iso();
     let id = sqlx::query(
         r#"
@@ -1039,10 +1070,14 @@ fn team_name_or_placeholder(
     team: Option<&serde_json::Value>,
     placeholder: Option<&serde_json::Value>,
 ) -> String {
-    team.and_then(|value| value_str(value, "ShortClubName"))
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| value.trim().to_string())
-        .or_else(|| team.and_then(|value| localized_description(value.get("TeamName"))))
+    team
+        .and_then(|value| localized_description(value.get("TeamName")))
+        .map(|value| translate_team_name(&value))
+        .or_else(|| {
+            team.and_then(|value| value_str(value, "ShortClubName"))
+                .filter(|value| !value.trim().is_empty())
+                .map(translate_team_name)
+        })
         .or_else(|| placeholder.and_then(|value| value.as_str()).map(format_placeholder))
         .unwrap_or_else(|| "待官方确认".to_string())
 }
@@ -1082,11 +1117,15 @@ fn format_placeholder(raw: &str) -> String {
 fn translate_stage(stage: &str) -> String {
     match stage {
         "First Stage" => "小组赛",
+        "第一阶段" => "小组赛",
         "Round of 32" => "32 强",
+        "32强赛" => "32 强",
         "Round of 16" => "16 强",
         "Quarter-final" => "8 强",
+        "四分之一决赛" => "8 强",
         "Semi-final" => "半决赛",
         "Play-off for third place" => "季军赛",
+        "第三名淘汰赛" => "季军赛",
         "Final" => "决赛",
         other => other,
     }
@@ -1102,9 +1141,64 @@ fn translate_group(group: &str) -> String {
 
 fn country_name(code: &str) -> String {
     match code {
-        "CAN" => "Canada",
-        "MEX" => "Mexico",
-        "USA" => "United States",
+        "CAN" => "加拿大",
+        "MEX" => "墨西哥",
+        "USA" => "美国",
+        other => other,
+    }
+    .to_string()
+}
+
+fn translate_team_name(name: &str) -> String {
+    match name.trim() {
+        "Algeria" => "阿尔及利亚",
+        "Argentina" => "阿根廷",
+        "Australia" => "澳大利亚",
+        "Austria" => "奥地利",
+        "Belgium" => "比利时",
+        "Bosnia and Herzegovina" => "波斯尼亚和黑塞哥维那",
+        "Brazil" => "巴西",
+        "Cabo Verde" => "佛得角",
+        "Canada" => "加拿大",
+        "Colombia" => "哥伦比亚",
+        "Congo DR" => "刚果民主共和国",
+        "Côte d'Ivoire" => "科特迪瓦",
+        "Croatia" => "克罗地亚",
+        "Curaçao" => "库拉索",
+        "Czechia" => "捷克",
+        "Ecuador" => "厄瓜多尔",
+        "Egypt" => "埃及",
+        "England" => "英格兰",
+        "France" => "法国",
+        "Germany" => "德国",
+        "Ghana" => "加纳",
+        "Haiti" => "海地",
+        "IR Iran" => "伊朗",
+        "Iraq" => "伊拉克",
+        "Japan" => "日本",
+        "Jordan" => "约旦",
+        "Korea Republic" => "韩国",
+        "Mexico" => "墨西哥",
+        "Morocco" => "摩洛哥",
+        "Netherlands" => "荷兰",
+        "New Zealand" => "新西兰",
+        "Norway" => "挪威",
+        "Panama" => "巴拿马",
+        "Paraguay" => "巴拉圭",
+        "Portugal" => "葡萄牙",
+        "Qatar" => "卡塔尔",
+        "Saudi Arabia" => "沙特阿拉伯",
+        "Scotland" => "苏格兰",
+        "Senegal" => "塞内加尔",
+        "South Africa" => "南非",
+        "Spain" => "西班牙",
+        "Sweden" => "瑞典",
+        "Switzerland" => "瑞士",
+        "Tunisia" => "突尼斯",
+        "Türkiye" | "Turkey" => "土耳其",
+        "Uruguay" => "乌拉圭",
+        "USA" | "United States" => "美国",
+        "Uzbekistan" => "乌兹别克斯坦",
         other => other,
     }
     .to_string()
@@ -1161,6 +1255,17 @@ struct OddsSnapshot {
     odds_value: f64,
 }
 
+struct BudgetNarrativeContext<'a> {
+    match_info: &'a BasicMatch,
+    prediction: Option<&'a PredictionRunDto>,
+    odds: Option<&'a OddsSnapshot>,
+    planning_mode: &'a str,
+    budget: f64,
+    risk_mode: &'a str,
+    expected_value: f64,
+    max_loss: f64,
+}
+
 async fn get_basic_match(pool: &SqlitePool, match_id: i64) -> AppResult<BasicMatch> {
     let row = sqlx::query(
         r#"
@@ -1178,8 +1283,8 @@ async fn get_basic_match(pool: &SqlitePool, match_id: i64) -> AppResult<BasicMat
         match_no: row.try_get("match_no")?,
         stage: row.try_get("stage")?,
         group_name: row.try_get("group_name")?,
-        home_team: row.try_get("home_team")?,
-        away_team: row.try_get("away_team")?,
+        home_team: translate_team_name(&row.try_get::<String, _>("home_team")?),
+        away_team: translate_team_name(&row.try_get::<String, _>("away_team")?),
         kickoff_beijing: row.try_get("kickoff_beijing")?,
         venue: row.try_get("venue")?,
         city: row.try_get("city")?,
@@ -1187,8 +1292,8 @@ async fn get_basic_match(pool: &SqlitePool, match_id: i64) -> AppResult<BasicMat
     })
 }
 
-async fn resolve_model_profile(pool: &SqlitePool) -> serde_json::Value {
-    match resolve_llm_config(pool).await {
+async fn resolve_model_profile(pool: &SqlitePool, kind: LlmProfileKind) -> serde_json::Value {
+    match resolve_llm_config_for(pool, kind).await {
         Ok(config) => json!({
             "provider": config.provider,
             "base_url": config.base_url,
@@ -1217,14 +1322,14 @@ async fn build_search_plan(
         ],
         "user_query": user_query.unwrap_or("")
     });
-    let Ok(config) = resolve_llm_config(pool).await else {
+    let Ok(config) = resolve_llm_config_for(pool, LlmProfileKind::WorldCupResearch).await else {
         return fallback;
     };
     if llm::requires_api_key(&config) && config.api_key.trim().is_empty() {
         return fallback;
     }
     let prompt = format!(
-        "请为世界杯比赛生成联网搜索计划，只输出 JSON。比赛：{} vs {}，时间：{}，地点：{}。用户补充：{}。字段包含 queries、priority_sources、risk_fields。",
+        "请为世界杯比赛生成联网搜索计划，只输出 JSON。比赛：{} 对阵 {}，时间：{}，地点：{}。用户补充：{}。字段包含 queries、priority_sources、risk_fields。",
         match_info.home_team,
         match_info.away_team,
         match_info.kickoff_beijing,
@@ -1415,7 +1520,7 @@ fn build_local_schedule_evidence(match_info: &BasicMatch) -> EvidenceDraft {
         source_name: "FIFA 官方赛程 API".to_string(),
         url: match_info.source_url.clone(),
         title: format!(
-            "第 {} 场 {} vs {}",
+            "第 {} 场 {} 对阵 {}",
             match_info.match_no, match_info.home_team, match_info.away_team
         ),
         published_at: None,
@@ -1522,7 +1627,7 @@ async fn try_llm_prediction(
     evidence: &[EvidenceItemDto],
     local_probability: &serde_json::Value,
 ) -> AppResult<(serde_json::Value, serde_json::Value, i64, String)> {
-    let config = resolve_llm_config(pool).await?;
+    let config = resolve_llm_config_for(pool, LlmProfileKind::WorldCupPrediction).await?;
     if llm::requires_api_key(&config) && config.api_key.trim().is_empty() {
         return Err(AppError::Config("LLM API Key 未配置".to_string()));
     }
@@ -1542,7 +1647,7 @@ async fn try_llm_prediction(
         .collect::<Vec<_>>()
         .join("\n");
     let user = format!(
-        "比赛：{} vs {}\n阶段：{}\n时间：{}\n地点：{} {}\n本地基线概率：{}\n已审查情报：\n{}\n\n请输出中文 Markdown 分析，并在末尾给出 JSON 概率对象，例如 {{\"home_win\":0.38,\"draw\":0.29,\"away_win\":0.33}}。不要承诺命中。",
+        "比赛：{} 对阵 {}\n阶段：{}\n时间：{}\n地点：{} {}\n本地基线概率：{}\n已审查情报：\n{}\n\n请输出中文 Markdown 分析，按「综合判断、关键依据、比分倾向、风险边界」组织。不要输出代码块。最后单独一行写机器可读概率数据：{{\"home_win\":0.38,\"draw\":0.29,\"away_win\":0.33}}。不要承诺命中。",
         match_info.home_team,
         match_info.away_team,
         match_info.stage,
@@ -1576,7 +1681,7 @@ async fn try_llm_prediction(
             "model": config.model,
         }),
         prompt_revision,
-        reply,
+        strip_machine_probability(&reply),
     ))
 }
 
@@ -1587,7 +1692,7 @@ async fn try_llm_audit(
     accepted_titles: &[String],
     rejected_titles: &[String],
 ) -> AppResult<String> {
-    let config = resolve_llm_config(pool).await?;
+    let config = resolve_llm_config_for(pool, LlmProfileKind::WorldCupResearch).await?;
     if llm::requires_api_key(&config) && config.api_key.trim().is_empty() {
         return Err(AppError::Config("LLM API Key 未配置".to_string()));
     }
@@ -1600,7 +1705,7 @@ async fn try_llm_audit(
             "你是赛事情报来源审查员。你只能审查语义可信度，不能覆盖本地硬规则。".to_string()
         });
     let user = format!(
-        "比赛：{} vs {}\n本地硬规则已通过：\n{}\n\n待核验或拒绝：\n{}\n\n请用中文 Markdown 输出来源审查结论，指出仍需人工核验的高影响字段。",
+        "比赛：{} 对阵 {}\n本地硬规则已通过：\n{}\n\n待核验或拒绝：\n{}\n\n请用中文 Markdown 输出来源审查结论，指出仍需人工核验的高影响字段。",
         match_info.home_team,
         match_info.away_team,
         accepted_titles
@@ -1629,6 +1734,145 @@ async fn try_llm_audit(
         ],
     )
     .await
+}
+
+async fn try_llm_budget_narrative(
+    client: &Client,
+    pool: &SqlitePool,
+    context: &BudgetNarrativeContext<'_>,
+) -> AppResult<(serde_json::Value, String)> {
+    let config = resolve_llm_config_for(pool, LlmProfileKind::WorldCupBudget).await?;
+    if llm::requires_api_key(&config) && config.api_key.trim().is_empty() {
+        return Err(AppError::Config("预算模拟 LLM API Key 未配置".to_string()));
+    }
+    let prompts = list_prompts(pool).await?;
+    let odds_planner = prompts
+        .iter()
+        .find(|p| p.role_name == "odds_planner")
+        .map(|p| p.content.clone())
+        .unwrap_or_else(|| {
+            "你是体彩赔率预算模拟师。必须遵守 planning_mode，不提供购彩、代购、出票或支付指引。"
+                .to_string()
+        });
+    let risk_controller = prompts
+        .iter()
+        .find(|p| p.role_name == "risk_controller")
+        .map(|p| p.content.clone())
+        .unwrap_or_else(|| "你是风险控制审查员。禁止输出稳赚必中或购彩指引。".to_string());
+    let probability = context
+        .prediction
+        .map(|item| item.final_probability.to_string())
+        .unwrap_or_else(|| "未生成比赛模拟".to_string());
+    let odds_summary = context
+        .odds
+        .map(|item| {
+            format!(
+                "来源等级：{}；选择：{}；赔率：{}；来源：{}",
+                item.source_level, item.selection_code, item.odds_value, item.source_url
+            )
+        })
+        .unwrap_or_else(|| "暂无可校验赔率快照".to_string());
+    let user = format!(
+        "比赛：{} 对阵 {}\n阶段：{}\n时间：{}\nplanning_mode：{}\n预算：{}\n风险偏好：{}\n当前期望收益估算：{}\n最大亏损估算：{}\n预测概率：{}\n赔率状态：{}\n\n请输出面向用户的中文说明，分为「状态判断」「预算边界」「风险提示」三段。不要输出 JSON、代码块、投注链接、购彩指引或必中承诺。",
+        context.match_info.home_team,
+        context.match_info.away_team,
+        context.match_info.stage,
+        context.match_info.kickoff_beijing,
+        context.planning_mode,
+        round2(context.budget),
+        risk_mode_label(context.risk_mode),
+        round2(context.expected_value),
+        round2(context.max_loss),
+        probability,
+        odds_summary
+    );
+    let reply = llm::chat_once(
+        client,
+        &config,
+        &[
+            ChatMessage {
+                role: "system".to_string(),
+                content: format!("{odds_planner}\n\n{risk_controller}"),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: user,
+            },
+        ],
+    )
+    .await?;
+    Ok((
+        json!({
+            "provider": config.provider,
+            "base_url": config.base_url,
+            "model": config.model,
+        }),
+        strip_machine_probability(&reply),
+    ))
+}
+
+fn local_budget_narrative(context: &BudgetNarrativeContext<'_>) -> String {
+    let probability = context
+        .prediction
+        .map(|item| {
+            format!(
+                "当前模拟概率为主胜 {}%、平局 {}%、客胜 {}%。",
+                percent(&item.final_probability, "home_win"),
+                percent(&item.final_probability, "draw"),
+                percent(&item.final_probability, "away_win")
+            )
+        })
+        .unwrap_or_else(|| "当前还没有可引用的比赛模拟。".to_string());
+    let source = context
+        .odds
+        .map(|item| {
+            format!(
+                "已读取到 {} 来源的赔率快照，选择项为 {}，赔率为 {}。",
+                source_level_text(&item.source_level),
+                item.selection_code,
+                item.odds_value
+            )
+        })
+        .unwrap_or_else(|| "当前没有可校验的体彩赔率快照。".to_string());
+    let boundary = match context.planning_mode {
+        "official" => format!(
+            "在 {} 风险偏好下，本地预算模拟金额为 {}，估算最大亏损 {}，期望收益估算 {}。",
+            risk_mode_label(context.risk_mode),
+            round2(context.budget),
+            round2(context.max_loss),
+            round2(context.expected_value)
+        ),
+        "reference_only" => format!(
+            "当前只能生成备用参考草案，预算 {} 不应直接作为执行依据，必须回到官方渠道核验。",
+            round2(context.budget)
+        ),
+        _ => "由于缺少可校验官方赔率，本场仅保留赛事分析，不输出金额分配。".to_string(),
+    };
+    format!(
+        "### 状态判断\n{} 对阵 {}。{} {}\n\n### 预算边界\n{}\n\n### 风险提示\n足球赛果受阵容、伤停、临场状态和赔率变化影响，本模拟不构成购彩建议。",
+        context.match_info.home_team,
+        context.match_info.away_team,
+        source,
+        probability,
+        boundary
+    )
+}
+
+fn risk_mode_label(value: &str) -> &'static str {
+    match value {
+        "conservative" => "保守",
+        "aggressive" => "激进",
+        _ => "平衡",
+    }
+}
+
+fn source_level_text(value: &str) -> &'static str {
+    match value {
+        "official" => "官方",
+        "verified_mirror" => "备用参考",
+        "market_reference" => "市场参考",
+        _ => "未知",
+    }
 }
 
 fn merge_probabilities(local: &serde_json::Value, llm: &serde_json::Value) -> serde_json::Value {
@@ -1688,6 +1932,38 @@ fn extract_probability_json(text: &str) -> Option<serde_json::Value> {
     } else {
         None
     }
+}
+
+fn strip_machine_probability(text: &str) -> String {
+    let mut out = String::new();
+    let mut in_json_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") && trimmed.to_ascii_lowercase().contains("json") {
+            in_json_fence = true;
+            continue;
+        }
+        if in_json_fence {
+            if trimmed.starts_with("```") {
+                in_json_fence = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("概率数据：") || looks_like_probability_json(trimmed) {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.trim().to_string()
+}
+
+fn looks_like_probability_json(line: &str) -> bool {
+    line.starts_with('{')
+        && line.ends_with('}')
+        && line.contains("home_win")
+        && line.contains("draw")
+        && line.contains("away_win")
 }
 
 async fn get_prediction(pool: &SqlitePool, id: i64) -> AppResult<PredictionRunDto> {
@@ -1788,8 +2064,8 @@ fn match_from_row(row: sqlx::sqlite::SqliteRow) -> AppResult<WorldCupMatchDto> {
         match_no: row.try_get("match_no")?,
         stage: row.try_get("stage")?,
         group_name: row.try_get("group_name")?,
-        home_team: row.try_get("home_team")?,
-        away_team: row.try_get("away_team")?,
+        home_team: translate_team_name(&row.try_get::<String, _>("home_team")?),
+        away_team: translate_team_name(&row.try_get::<String, _>("away_team")?),
         kickoff_utc: row.try_get("kickoff_utc")?,
         kickoff_beijing: row.try_get("kickoff_beijing")?,
         venue: row.try_get("venue")?,
@@ -2020,10 +2296,51 @@ mod tests {
         assert_eq!(parsed.match_no, 1);
         assert_eq!(parsed.stage, "小组赛");
         assert_eq!(parsed.group_name.as_deref(), Some("A 组"));
-        assert_eq!(parsed.home_team, "Mexico");
-        assert_eq!(parsed.away_team, "South Africa");
+        assert_eq!(parsed.home_team, "墨西哥");
+        assert_eq!(parsed.away_team, "南非");
         assert_eq!(parsed.kickoff_beijing, "2026-06-12T03:00:00+08:00");
         assert!(parsed.source_url.ends_with("/400021443"));
+    }
+
+    #[test]
+    fn parses_fifa_calendar_match_with_chinese_team_names() {
+        let raw = json!({
+            "IdCompetition": "17",
+            "IdSeason": "285023",
+            "IdStage": "289273",
+            "IdMatch": "400021443",
+            "MatchNumber": 1,
+            "Date": "2026-06-11T19:00:00Z",
+            "StageName": [{"Locale": "zh-CN", "Description": "第一阶段"}],
+            "GroupName": [{"Locale": "zh-CN", "Description": "A 组"}],
+            "Home": {
+                "ShortClubName": "Mexico",
+                "TeamName": [{"Locale": "zh-CN", "Description": "墨西哥"}]
+            },
+            "Away": {
+                "ShortClubName": "South Africa",
+                "TeamName": [{"Locale": "zh-CN", "Description": "南非"}]
+            },
+            "Stadium": {
+                "Name": [{"Locale": "zh-CN", "Description": "墨西哥城体育场"}],
+                "CityName": [{"Locale": "zh-CN", "Description": "墨西哥城"}],
+                "IdCountry": "MEX"
+            }
+        });
+        let parsed = parse_fifa_calendar_match(&raw).unwrap();
+        assert_eq!(parsed.stage, "小组赛");
+        assert_eq!(parsed.group_name.as_deref(), Some("A 组"));
+        assert_eq!(parsed.home_team, "墨西哥");
+        assert_eq!(parsed.away_team, "南非");
+        assert_eq!(parsed.country, "墨西哥");
+    }
+
+    #[test]
+    fn translates_cached_english_team_names() {
+        assert_eq!(translate_team_name("USA"), "美国");
+        assert_eq!(translate_team_name("Korea Republic"), "韩国");
+        assert_eq!(translate_team_name("Bosnia and Herzegovina"), "波斯尼亚和黑塞哥维那");
+        assert_eq!(translate_team_name("D 组第 3 名"), "D 组第 3 名");
     }
 
     #[test]

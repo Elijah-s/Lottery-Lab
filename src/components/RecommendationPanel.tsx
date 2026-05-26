@@ -277,18 +277,20 @@ async function runPipeline(rawText: string): Promise<RecommendationOutput> {
     console.warn("parse issues:", parsed.issues);
   }
 
-  const draws = await listDraws(parsed.lotteryType, 200);
+  const requestedWindow = parsed.historyWindowSize;
+  const draws = await listDraws(parsed.lotteryType, requestedWindow);
   const history: DrawRecord[] = draws
     .map(drawDtoToRecord)
     .filter((draw): draw is DrawRecord => draw !== null);
-  if (history.length < 100) {
+  if (history.length < requestedWindow) {
     throw new Error(
-      `当前历史开奖不足 100 期（已同步 ${history.length} 期）。请先在仪表板点「立即同步」。`,
+      `当前历史开奖不足 ${requestedWindow} 期（可用 ${history.length} 期）。请先在「历史开奖同步」拉取更多期数，或在需求中指定更小的分析窗口。`,
     );
   }
 
-  const bundle = generateLlmCandidateBundle(parsed, history);
-  return submitToRust(parsed, history, bundle);
+  const analysisHistory = history.slice(0, requestedWindow);
+  const bundle = generateLlmCandidateBundle(parsed, analysisHistory);
+  return submitToRust(parsed, analysisHistory, bundle);
 }
 
 function drawDtoToRecord(draw: DrawDto): DrawRecord | null {
@@ -378,6 +380,8 @@ function parsedToPayload(parsed: ParsedRequest): Record<string, unknown> {
     play_mode: parsed.playMode,
     additional: parsed.additional,
     exploration_mode: parsed.explorationMode,
+    history_window_size: parsed.historyWindowSize,
+    history_window_source: parsed.historyWindowSource,
     raw_request: parsed.rawRequest,
     issues: parsed.issues,
   };

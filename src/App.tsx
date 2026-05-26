@@ -9,10 +9,10 @@ import { WorldCupPage } from "@/pages/WorldCupPage";
 
 export default function App(): JSX.Element {
   return (
-    <div className="flex h-full min-h-screen w-full bg-background text-foreground">
+    <div className="flex h-full min-h-screen w-full flex-col bg-background text-foreground md:flex-row">
       <Sidebar />
-      <main className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-5xl px-8 py-10">
+      <main className="min-w-0 flex-1 overflow-auto">
+        <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/history" element={<HistoryPage />} />

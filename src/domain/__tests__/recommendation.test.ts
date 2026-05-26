@@ -49,4 +49,14 @@ describe("generateCandidates", () => {
     expect(strategies.size).toBeGreaterThan(1);
     expect(bundle.topCandidate.amount).toBeLessThanOrEqual(parsed.budget);
   });
+
+  it("reports the exact user-requested history window", () => {
+    const parsed = parseUserRequest("大乐透 30 元 追加 最近 50 期");
+    const history = makeDltHistory(parsed.historyWindowSize);
+    const bundle = generateLlmCandidateBundle(parsed, history);
+
+    expect(parsed.historyWindowSize).toBe(50);
+    expect(bundle.historyWindowSize).toBe(50);
+    expect(bundle.validatedHistoryCount).toBe(50);
+  });
 });

@@ -45,14 +45,14 @@ export function Sidebar(): JSX.Element {
   }, []);
 
   return (
-    <aside className="flex h-full w-56 shrink-0 flex-col border-r border-border bg-card/40">
-      <div className="px-5 py-6">
+    <aside className="flex w-full shrink-0 flex-col border-b border-border bg-card/40 md:h-full md:w-56 md:border-b-0 md:border-r">
+      <div className="px-4 py-4 md:px-5 md:py-6">
         <h1 className="text-lg font-semibold tracking-tight">Lottery Lab</h1>
         <p className="mt-1 text-xs text-muted-foreground">
           双色球 · 大乐透 · 本地实验台
         </p>
       </div>
-      <nav className="flex flex-1 flex-col gap-1 px-2 pb-4">
+      <nav className="flex gap-1 overflow-x-auto px-2 pb-3 md:flex-1 md:flex-col md:overflow-visible md:pb-4">
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
@@ -60,7 +60,7 @@ export function Sidebar(): JSX.Element {
             end={item.to === "/"}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+                "flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors md:gap-3",
                 "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 isActive && "bg-accent text-accent-foreground font-medium",
               )
@@ -71,7 +71,7 @@ export function Sidebar(): JSX.Element {
           </NavLink>
         ))}
       </nav>
-      <div className="px-5 py-4 text-[11px] text-muted-foreground">
+      <div className="hidden px-5 py-4 text-[11px] text-muted-foreground md:block">
         {version ? `版本 ${version} · 本地版` : "本地版"}
       </div>
     </aside>

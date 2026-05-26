@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use reqwest::Client;
+use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::State;
@@ -13,7 +13,7 @@ use crate::llm;
 use crate::prompts::{self, PromptRecord};
 use crate::recommendation::{self, RecommendationInput, RecommendationOutput};
 use crate::reviews::{self, ReviewDto};
-use crate::settings::{self, AiSettings, AiSettingsInput};
+use crate::settings::{self, AiSettings, AiSettingsInput, LlmProfileKind};
 use crate::state::AppState;
 use crate::sync::{SyncService, SyncSummary, DEFAULT_LOOKBACK};
 use crate::worldcup::{
@@ -23,10 +23,21 @@ use crate::worldcup::{
 };
 
 fn build_http_client() -> Client {
+    let mut headers = header::HeaderMap::new();
+    headers.insert(
+        header::ACCEPT,
+        header::HeaderValue::from_static("application/json, text/plain;q=0.8, */*;q=0.5"),
+    );
+    headers.insert(
+        header::ACCEPT_ENCODING,
+        header::HeaderValue::from_static("identity"),
+    );
+
     Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
-        .user_agent("LotteryLab/0.1 (+macOS; desktop; local)")
+        .default_headers(headers)
+        .user_agent("LotteryLab/0.2.1")
         .build()
         .expect("reqwest client builds")
 }
@@ -380,8 +391,13 @@ pub struct LlmModelList {
 }
 
 #[tauri::command]
-pub async fn list_llm_models(state: State<'_, AppState>) -> AppResult<LlmModelList> {
-    let config = settings::resolve_llm_config(&state.pool).await?;
+pub async fn list_llm_models(
+    state: State<'_, AppState>,
+    profile: Option<String>,
+) -> AppResult<LlmModelList> {
+    let config =
+        settings::resolve_llm_config_for(&state.pool, llm_profile_kind(profile.as_deref())?)
+            .await?;
     let client = build_http_client();
     let models = llm::list_models(&client, &config).await?;
     Ok(LlmModelList {
@@ -403,8 +419,11 @@ pub struct LlmConnectionTest {
 #[tauri::command]
 pub async fn test_llm_connection(
     state: State<'_, AppState>,
+    profile: Option<String>,
 ) -> AppResult<LlmConnectionTest> {
-    let config = settings::resolve_llm_config(&state.pool).await?;
+    let config =
+        settings::resolve_llm_config_for(&state.pool, llm_profile_kind(profile.as_deref())?)
+            .await?;
     let client = build_http_client();
     let result = llm::test_connection(&client, &config).await;
     let (ok, message) = match result {
@@ -421,6 +440,16 @@ pub async fn test_llm_connection(
         model: config.model,
         message,
     })
+}
+
+fn llm_profile_kind(profile: Option<&str>) -> AppResult<LlmProfileKind> {
+    match profile.unwrap_or("default") {
+        "default" | "" => Ok(LlmProfileKind::Default),
+        "worldcup_research" => Ok(LlmProfileKind::WorldCupResearch),
+        "worldcup_prediction" => Ok(LlmProfileKind::WorldCupPrediction),
+        "worldcup_budget" => Ok(LlmProfileKind::WorldCupBudget),
+        other => Err(AppError::BadResponse(format!("未知模型配置：{other}"))),
+    }
 }
 
 // --- World Cup -------------------------------------------------------------
@@ -494,7 +523,8 @@ pub async fn create_worldcup_budget_plan(
     state: State<'_, AppState>,
     input: BudgetPlanInput,
 ) -> AppResult<BudgetPlanDto> {
-    worldcup::create_worldcup_budget_plan(&state.pool, input).await
+    let client = build_http_client();
+    worldcup::create_worldcup_budget_plan(&state.pool, &client, input).await
 }
 
 #[tauri::command]

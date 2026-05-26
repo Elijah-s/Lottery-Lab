@@ -9,6 +9,8 @@ describe("parseUserRequest", () => {
     expect(parsed.tone).toBe("conservative");
     expect(parsed.playMode).toBe("single");
     expect(parsed.additional).toBe(false);
+    expect(parsed.historyWindowSize).toBe(200);
+    expect(parsed.historyWindowSource).toBe("default");
     expect(parsed.issues).toEqual([]);
   });
 
@@ -77,5 +79,25 @@ describe("parseUserRequest", () => {
     expect(parsed.lotteryType).toBe("ssq");
     expect(parsed.budget).toBe(20);
     expect(parsed.issues.length).toBeGreaterThan(0);
+  });
+
+  it("parses an explicit recent history window", () => {
+    const parsed = parseUserRequest("双色球 20 元 最近 50 期 稳一点");
+    expect(parsed.historyWindowSize).toBe(50);
+    expect(parsed.historyWindowSource).toBe("user");
+  });
+
+  it("parses a data-analysis history window", () => {
+    const parsed = parseUserRequest("大乐透 30 元 根据 500 期数据分析 追加");
+    expect(parsed.historyWindowSize).toBe(500);
+    expect(parsed.historyWindowSource).toBe("user");
+  });
+
+  it("clamps overly large history windows", () => {
+    const parsed = parseUserRequest("双色球 20 元 参考 5000 期数据");
+    expect(parsed.historyWindowSize).toBe(1000);
+    expect(parsed.issues).toEqual(
+      expect.arrayContaining([expect.stringMatching(/历史分析窗口/)]),
+    );
   });
 });

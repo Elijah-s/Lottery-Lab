@@ -148,9 +148,30 @@ export interface AiSettings {
   base_url: string | null;
   model: string | null;
   has_api_key: boolean;
+  worldcup_research: LlmProfileSettings;
+  worldcup_prediction: LlmProfileSettings;
+  worldcup_budget: LlmProfileSettings;
+}
+
+export interface LlmProfileSettings {
+  provider: string | null;
+  base_url: string | null;
+  model: string | null;
+  has_api_key: boolean;
+  api_key_source: "profile" | "global" | "none" | string;
 }
 
 export interface AiSettingsInput {
+  provider?: string;
+  base_url?: string;
+  model?: string;
+  api_key?: string;
+  worldcup_research?: LlmProfileInput;
+  worldcup_prediction?: LlmProfileInput;
+  worldcup_budget?: LlmProfileInput;
+}
+
+export interface LlmProfileInput {
   provider?: string;
   base_url?: string;
   model?: string;
@@ -443,12 +464,12 @@ export function saveAiSettings(input: AiSettingsInput): Promise<AiSettings> {
   return invoke<AiSettings>("save_ai_settings", { input });
 }
 
-export function listLlmModels(): Promise<LlmModelList> {
-  return invoke<LlmModelList>("list_llm_models");
+export function listLlmModels(profile?: string): Promise<LlmModelList> {
+  return invoke<LlmModelList>("list_llm_models", { profile });
 }
 
-export function testLlmConnection(): Promise<LlmConnectionTest> {
-  return invoke<LlmConnectionTest>("test_llm_connection");
+export function testLlmConnection(profile?: string): Promise<LlmConnectionTest> {
+  return invoke<LlmConnectionTest>("test_llm_connection", { profile });
 }
 
 export function syncWorldCupSchedule(): Promise<WorldCupScheduleSync> {

@@ -280,30 +280,40 @@ export function WorldCupPage(): JSX.Element {
           onSync={() => syncScheduleMutation.mutate()}
         />
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[330px_minmax(0,1fr)]">
-          <section className="space-y-3">
-            <input
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              placeholder="筛选球队、阶段、城市或场次"
-              className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-            <div className="max-h-[680px] space-y-2 overflow-auto pr-1">
+        <div className="grid gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <section className="space-y-3 lg:sticky lg:top-4 lg:self-start">
+            <div className="rounded-md border border-border bg-card p-3">
+              <input
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+                placeholder="筛选球队、阶段、城市或场次"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <div className="mt-2 text-xs text-muted-foreground">
+                当前显示 {filteredMatches.length} / {matches.length} 场
+              </div>
+            </div>
+            <div className="max-h-[calc(100vh-270px)] space-y-2 overflow-auto pr-1">
               {filteredMatches.map((match) => (
                 <button
                   type="button"
                   key={match.id}
                   onClick={() => setSelectedMatchId(match.id)}
                   className={cn(
-                    "w-full rounded-md border border-border bg-card p-3 text-left text-sm transition-colors hover:bg-secondary",
+                    "w-full rounded-md border border-border bg-card p-3.5 text-left text-sm transition-colors hover:bg-secondary",
                     effectiveMatchId === match.id && "border-primary bg-accent",
                   )}
                 >
                   <div className="flex items-start justify-between gap-2">
-                    <div className="font-medium">
-                      {match.match_no}. {match.home_team} vs {match.away_team}
+                    <div className="min-w-0">
+                      <div className="text-[11px] text-muted-foreground">
+                        第 {match.match_no} 场
+                      </div>
+                      <div className="mt-1 font-semibold leading-5 text-foreground">
+                        {matchTitle(match)}
+                      </div>
                     </div>
-                    <span className="rounded bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <span className="shrink-0 rounded bg-secondary px-2 py-0.5 text-[11px] text-muted-foreground">
                       {match.stage}
                     </span>
                   </div>
@@ -372,6 +382,7 @@ function MatchWorkspace(props: {
 }): JSX.Element {
   const latestPrediction = props.predictions[0];
   const latestBudget = props.budgetPlans[0];
+  const isOverview = props.activeTab === "overview";
 
   return (
     <div className="space-y-4">
@@ -382,7 +393,7 @@ function MatchWorkspace(props: {
               第 {props.match.match_no} 场 · {props.match.stage}
             </div>
             <h3 className="mt-1 text-xl font-semibold">
-              {props.match.home_team} vs {props.match.away_team}
+              {matchTitle(props.match)}
             </h3>
             <div className="mt-2 flex flex-wrap gap-3 text-sm text-muted-foreground">
               <span>{formatTime(props.match.kickoff_beijing)}</span>
@@ -401,7 +412,7 @@ function MatchWorkspace(props: {
         </div>
       </div>
 
-      {props.activeTab === "overview" || props.activeTab === "matches" ? (
+      {isOverview || props.activeTab === "matches" ? (
         <div className="grid gap-3 md:grid-cols-3">
           <InfoPanel title="情报状态" value={`${props.evidence.length} 条`} />
           <InfoPanel
@@ -415,107 +426,226 @@ function MatchWorkspace(props: {
         </div>
       ) : null}
 
-      {props.activeTab === "intel" || props.activeTab === "overview" ? (
-        <Panel
-          title="赛前情报"
-          action={
-            <button
-              type="button"
-              onClick={props.onFetchIntel}
-              disabled={props.busy}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-            >
-              <Search className="h-4 w-4" />
-              获取赛前情报
-            </button>
-          }
-        >
-          <textarea
-            value={props.intelQuery}
-            onChange={(event) => props.setIntelQuery(event.target.value)}
-            placeholder="可补充关注点，例如：重点看伤停、预计首发、教练发布会、体彩赔率变化"
-            className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+      {isOverview ? (
+        <div className="space-y-4">
+          <IntelligencePanel
+            evidence={props.evidence}
+            intelQuery={props.intelQuery}
+            setIntelQuery={props.setIntelQuery}
+            busy={props.busy}
+            onFetchIntel={props.onFetchIntel}
+            evidenceLimit={6}
+            evidenceMaxClassName="max-h-72"
           />
-          <EvidenceList evidence={props.evidence} />
-        </Panel>
+          <PredictionPanel
+            evidenceCount={props.evidence.length}
+            prediction={latestPrediction}
+            busy={props.busy}
+            onPredict={props.onPredict}
+          />
+          <BudgetPanel
+            budget={props.budget}
+            setBudget={props.setBudget}
+            riskMode={props.riskMode}
+            setRiskMode={props.setRiskMode}
+            latestPrediction={latestPrediction}
+            latestBudget={latestBudget}
+            busy={props.busy}
+            onBudget={props.onBudget}
+          />
+          <SourcesPanel
+            queueCount={props.queueCount}
+            sourceHealth={props.sourceHealth}
+            maxClassName="max-h-56"
+          />
+        </div>
       ) : null}
 
-      {props.activeTab === "prediction" || props.activeTab === "overview" ? (
-        <Panel
-          title="比赛模拟"
-          action={
-            <button
-              type="button"
-              onClick={props.onPredict}
-              disabled={props.busy || props.evidence.length === 0}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-            >
-              <BrainCircuit className="h-4 w-4" />
-              生成模拟
-            </button>
-          }
-        >
-          {latestPrediction ? (
-            <PredictionView prediction={latestPrediction} />
-          ) : (
-            <MutedText>需要先获取并通过审查的赛前情报。</MutedText>
-          )}
-        </Panel>
+      {props.activeTab === "intel" ? (
+        <IntelligencePanel
+          evidence={props.evidence}
+          intelQuery={props.intelQuery}
+          setIntelQuery={props.setIntelQuery}
+          busy={props.busy}
+          onFetchIntel={props.onFetchIntel}
+          evidenceLimit={12}
+          evidenceMaxClassName="max-h-[520px]"
+        />
       ) : null}
 
-      {props.activeTab === "budget" || props.activeTab === "overview" ? (
-        <Panel
-          title="预算模拟"
-          action={
-            <button
-              type="button"
-              onClick={props.onBudget}
-              disabled={props.busy || !latestPrediction}
-              className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-            >
-              <WalletCards className="h-4 w-4" />
-              生成预算模拟
-            </button>
-          }
-        >
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="text-sm">
-              <span className="text-muted-foreground">预算</span>
-              <input
-                type="number"
-                min={0}
-                max={100000}
-                value={props.budget}
-                onChange={(event) => props.setBudget(Number(event.target.value))}
-                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-              />
-            </label>
-            <label className="text-sm">
-              <span className="text-muted-foreground">风险偏好</span>
-              <select
-                value={props.riskMode}
-                onChange={(event) => props.setRiskMode(event.target.value)}
-                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="conservative">保守</option>
-                <option value="balanced">平衡</option>
-                <option value="aggressive">激进</option>
-              </select>
-            </label>
-          </div>
-          {latestBudget ? <BudgetView plan={latestBudget} /> : <MutedText>没有预算模拟记录。</MutedText>}
-        </Panel>
+      {props.activeTab === "prediction" ? (
+        <PredictionPanel
+          evidenceCount={props.evidence.length}
+          prediction={latestPrediction}
+          busy={props.busy}
+          onPredict={props.onPredict}
+        />
       ) : null}
 
-      {props.activeTab === "sources" || props.activeTab === "overview" ? (
-        <Panel title="数据源与队列">
-          <div className="mb-3 text-sm text-muted-foreground">
-            当前队列任务 {props.queueCount} 个。批量任务默认应限制未来 24/48 小时比赛。
-          </div>
-          <SourceHealthList items={props.sourceHealth} />
-        </Panel>
+      {props.activeTab === "budget" ? (
+        <BudgetPanel
+          budget={props.budget}
+          setBudget={props.setBudget}
+          riskMode={props.riskMode}
+          setRiskMode={props.setRiskMode}
+          latestPrediction={latestPrediction}
+          latestBudget={latestBudget}
+          busy={props.busy}
+          onBudget={props.onBudget}
+        />
+      ) : null}
+
+      {props.activeTab === "sources" ? (
+        <SourcesPanel
+          queueCount={props.queueCount}
+          sourceHealth={props.sourceHealth}
+          maxClassName="max-h-[520px]"
+        />
       ) : null}
     </div>
+  );
+}
+
+function IntelligencePanel(props: {
+  evidence: EvidenceItemDto[];
+  intelQuery: string;
+  setIntelQuery: (value: string) => void;
+  busy: boolean;
+  onFetchIntel: () => void;
+  evidenceLimit: number;
+  evidenceMaxClassName: string;
+}): JSX.Element {
+  return (
+    <Panel
+      title="赛前情报"
+      action={
+        <button
+          type="button"
+          onClick={props.onFetchIntel}
+          disabled={props.busy}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+        >
+          <Search className="h-4 w-4" />
+          获取赛前情报
+        </button>
+      }
+    >
+      <textarea
+        value={props.intelQuery}
+        onChange={(event) => props.setIntelQuery(event.target.value)}
+        placeholder="可补充关注点，例如：重点看伤停、预计首发、教练发布会、体彩赔率变化"
+        className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+      />
+      <EvidenceList
+        evidence={props.evidence}
+        limit={props.evidenceLimit}
+        maxClassName={props.evidenceMaxClassName}
+      />
+    </Panel>
+  );
+}
+
+function PredictionPanel(props: {
+  evidenceCount: number;
+  prediction: PredictionRunDto | undefined;
+  busy: boolean;
+  onPredict: () => void;
+}): JSX.Element {
+  return (
+    <Panel
+      title="比赛模拟"
+      action={
+        <button
+          type="button"
+          onClick={props.onPredict}
+          disabled={props.busy || props.evidenceCount === 0}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+        >
+          <BrainCircuit className="h-4 w-4" />
+          生成模拟
+        </button>
+      }
+    >
+      {props.prediction ? (
+        <PredictionView prediction={props.prediction} />
+      ) : (
+        <MutedText>需要先获取并通过审查的赛前情报。</MutedText>
+      )}
+    </Panel>
+  );
+}
+
+function BudgetPanel(props: {
+  budget: number;
+  setBudget: (value: number) => void;
+  riskMode: string;
+  setRiskMode: (value: string) => void;
+  latestPrediction: PredictionRunDto | undefined;
+  latestBudget: BudgetPlanDto | undefined;
+  busy: boolean;
+  onBudget: () => void;
+}): JSX.Element {
+  return (
+    <Panel
+      title="预算模拟"
+      action={
+        <button
+          type="button"
+          onClick={props.onBudget}
+          disabled={props.busy || !props.latestPrediction}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+        >
+          <WalletCards className="h-4 w-4" />
+          生成预算模拟
+        </button>
+      }
+    >
+      <div className="grid gap-3">
+        <label className="text-sm">
+          <span className="text-muted-foreground">预算</span>
+          <input
+            type="number"
+            min={0}
+            max={100000}
+            value={props.budget}
+            onChange={(event) => props.setBudget(Number(event.target.value))}
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+          />
+        </label>
+        <label className="text-sm">
+          <span className="text-muted-foreground">风险偏好</span>
+          <select
+            value={props.riskMode}
+            onChange={(event) => props.setRiskMode(event.target.value)}
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="conservative">保守</option>
+            <option value="balanced">平衡</option>
+            <option value="aggressive">激进</option>
+          </select>
+        </label>
+      </div>
+      {props.latestBudget ? (
+        <BudgetView plan={props.latestBudget} />
+      ) : (
+        <MutedText>没有预算模拟记录。</MutedText>
+      )}
+    </Panel>
+  );
+}
+
+function SourcesPanel(props: {
+  queueCount: number;
+  sourceHealth: SourceHealthDto[];
+  maxClassName: string;
+}): JSX.Element {
+  return (
+    <Panel title="数据源与队列">
+      <div className="mb-3 text-sm text-muted-foreground">
+        当前队列任务 {props.queueCount} 个。批量任务默认应限制未来 24/48 小时比赛。
+      </div>
+      <SourceHealthList items={props.sourceHealth} maxClassName={props.maxClassName} />
+    </Panel>
   );
 }
 
@@ -563,13 +693,19 @@ function InfoPanel(props: { title: string; value: string }): JSX.Element {
   );
 }
 
-function EvidenceList(props: { evidence: EvidenceItemDto[] }): JSX.Element {
+function EvidenceList(props: {
+  evidence: EvidenceItemDto[];
+  limit: number;
+  maxClassName: string;
+}): JSX.Element {
   if (props.evidence.length === 0) {
     return <MutedText>还没有赛前情报。点击获取后会先审查再入库。</MutedText>;
   }
+  const visibleEvidence = props.evidence.slice(0, props.limit);
   return (
-    <div className="space-y-2">
-      {props.evidence.slice(0, 8).map((item) => (
+    <div>
+      <div className={cn("space-y-2 overflow-auto pr-1", props.maxClassName)}>
+        {visibleEvidence.map((item) => (
         <div key={item.id} className="rounded-md border border-border bg-background p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-medium">{item.title}</div>
@@ -584,6 +720,12 @@ function EvidenceList(props: { evidence: EvidenceItemDto[] }): JSX.Element {
           </div>
         </div>
       ))}
+      </div>
+      {props.evidence.length > visibleEvidence.length ? (
+        <div className="mt-2 text-xs text-muted-foreground">
+          已显示最近 {visibleEvidence.length} 条，共 {props.evidence.length} 条。
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -597,34 +739,73 @@ function PredictionView(props: { prediction: PredictionRunDto }): JSX.Element {
         <InfoPanel title="平局" value={`${toPercent(probability.draw)}%`} />
         <InfoPanel title="客胜" value={`${toPercent(probability.away_win)}%`} />
       </div>
-      <div className="rounded-md border border-border bg-background p-3 text-sm whitespace-pre-wrap">
-        {props.prediction.analysis_markdown}
+      <div className="rounded-md border border-border bg-background p-4">
+        <ReadableMarkdown text={props.prediction.analysis_markdown} />
       </div>
     </div>
   );
 }
 
 function BudgetView(props: { plan: BudgetPlanDto }): JSX.Element {
+  const narrative = budgetNarrative(props.plan);
   return (
-    <div className="rounded-md border border-border bg-background p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <StatusPill label={planningModeLabel(props.plan.planning_mode)} />
-        <StatusPill label={`预算 ${props.plan.budget}`} />
-        <StatusPill label={`最大亏损 ${props.plan.max_loss}`} />
+    <div className="space-y-3">
+      <div className="grid gap-2 md:grid-cols-3">
+        <InfoPanel title="模式" value={planningModeLabel(props.plan.planning_mode)} />
+        <InfoPanel title="预算" value={formatMoney(props.plan.budget)} />
+        <InfoPanel title="最大亏损" value={formatMoney(props.plan.max_loss)} />
       </div>
-      <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-5 text-muted-foreground">
-        {JSON.stringify(props.plan.plan_json, null, 2)}
-      </pre>
+      <div className="rounded-md border border-border bg-background p-4">
+        <ReadableMarkdown text={narrative} />
+      </div>
     </div>
   );
 }
 
-function SourceHealthList(props: { items: SourceHealthDto[] }): JSX.Element {
+function ReadableMarkdown(props: { text: string }): JSX.Element {
+  const lines = sanitizeMarkdown(props.text).split("\n");
+  return (
+    <div className="space-y-3 text-sm leading-7 text-foreground">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return null;
+        if (trimmed.startsWith("### ")) {
+          return (
+            <h4 key={index} className="pt-1 text-base font-semibold leading-6">
+              {renderInline(trimmed.slice(4))}
+            </h4>
+          );
+        }
+        if (trimmed.startsWith("## ")) {
+          return (
+            <h4 key={index} className="pt-1 text-base font-semibold leading-6">
+              {renderInline(trimmed.slice(3))}
+            </h4>
+          );
+        }
+        if (trimmed.startsWith("- ")) {
+          return (
+            <p key={index} className="pl-3 text-muted-foreground">
+              <span className="mr-2 text-primary">-</span>
+              {renderInline(trimmed.slice(2))}
+            </p>
+          );
+        }
+        return <p key={index}>{renderInline(trimmed)}</p>;
+      })}
+    </div>
+  );
+}
+
+function SourceHealthList(props: {
+  items: SourceHealthDto[];
+  maxClassName: string;
+}): JSX.Element {
   if (props.items.length === 0) {
     return <MutedText>还没有数据源检查记录。</MutedText>;
   }
   return (
-    <div className="space-y-2">
+    <div className={cn("space-y-2 overflow-auto pr-1", props.maxClassName)}>
       {props.items.map((item) => (
         <div key={item.id} className="rounded-md border border-border bg-background p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -678,6 +859,10 @@ function MutedText(props: { children: ReactNode }): JSX.Element {
   return <p className="text-sm text-muted-foreground">{props.children}</p>;
 }
 
+function matchTitle(match: WorldCupMatchDto): string {
+  return `${match.home_team} 对阵 ${match.away_team}`;
+}
+
 function sourceLevelLabel(value: string): string {
   if (value === "official") return "官方源";
   if (value === "verified_mirror") return "备用参考";
@@ -705,9 +890,70 @@ function planningModeLabel(value: string): string {
 }
 
 function formatTime(value: string): string {
-  return value.replace("T", " ").replace("+08:00", "").replace("Z", "");
+  return value.replace("T", " ").replace("+08:00", "").replace("Z", "").replace(/:00$/, "");
 }
 
 function toPercent(value: number | undefined): string {
   return ((value ?? 0) * 100).toFixed(1);
+}
+
+function formatMoney(value: number): string {
+  return value > 0 ? value.toFixed(2).replace(/\.00$/, "") : "0";
+}
+
+function budgetNarrative(plan: BudgetPlanDto): string {
+  const narrative = stringField(plan.plan_json, "narrative_markdown");
+  if (narrative) return narrative;
+  if (plan.planning_mode === "official") {
+    return `### 状态判断\n当前预算模拟基于官方体彩赔率快照生成。\n\n### 预算边界\n预算 ${formatMoney(plan.budget)}，最大亏损 ${formatMoney(plan.max_loss)}，期望收益估算 ${formatMoney(plan.expected_value)}。\n\n### 风险提示\n足球赛果受阵容、伤停、临场状态和赔率变化影响，本模拟不构成购彩建议。`;
+  }
+  if (plan.planning_mode === "reference_only") {
+    return `### 状态判断\n当前仅有备用参考源，不能当作官方赔率。\n\n### 预算边界\n预算 ${formatMoney(plan.budget)} 只用于本地模拟，执行前必须回到官方渠道核验。\n\n### 风险提示\n备用参考存在延迟或映射错误风险，本模拟不构成购彩建议。`;
+  }
+  return "### 状态判断\n当前没有可校验的体彩赔率快照。\n\n### 预算边界\n本场仅保留赛事分析，不输出金额分配。\n\n### 风险提示\n足球赛果受阵容、伤停、临场状态和赔率变化影响，本模拟不构成购彩建议。";
+}
+
+function stringField(value: Record<string, unknown>, key: string): string | null {
+  const item = value[key];
+  return typeof item === "string" && item.trim().length > 0 ? item : null;
+}
+
+function sanitizeMarkdown(text: string): string {
+  const cleaned: string[] = [];
+  let inJsonFence = false;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```") && trimmed.toLowerCase().includes("json")) {
+      inJsonFence = true;
+      continue;
+    }
+    if (inJsonFence) {
+      if (trimmed.startsWith("```")) inJsonFence = false;
+      continue;
+    }
+    if (trimmed.startsWith("概率数据：") || looksLikeProbabilityJson(trimmed)) {
+      continue;
+    }
+    cleaned.push(line);
+  }
+  return cleaned.join("\n").trim();
+}
+
+function looksLikeProbabilityJson(value: string): boolean {
+  return (
+    value.startsWith("{") &&
+    value.endsWith("}") &&
+    value.includes("home_win") &&
+    value.includes("draw") &&
+    value.includes("away_win")
+  );
+}
+
+function renderInline(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
 }

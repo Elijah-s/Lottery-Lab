@@ -49,7 +49,7 @@ export interface CandidateBundle {
   candidates: Candidate[];
 }
 
-const MIN_HISTORY_REQUIRED = 100;
+const MIN_HISTORY_REQUIRED = 1;
 const MAX_STRUCTURES = 10;
 const CANDIDATES_PER_STRUCTURE = 8;
 const TOP_KEEP = 5;

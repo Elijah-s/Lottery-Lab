@@ -10,8 +10,9 @@
 //! Both branches collapse the response into a single markdown string
 //! so the caller stays provider-agnostic.
 
-use reqwest::{Client, RequestBuilder};
-use serde::{Deserialize, Serialize};
+use reqwest::{Client, RequestBuilder, Response};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::errors::{AppError, AppResult};
 
@@ -141,17 +142,6 @@ struct OpenAiChatMessage {
     content: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ModelListResponse {
-    #[serde(default)]
-    data: Vec<ModelItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModelItem {
-    id: String,
-}
-
 async fn chat_openai_compatible(
     client: &Client,
     config: &LlmConfig,
@@ -173,10 +163,10 @@ async fn chat_openai_compatible(
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text = response_text_for_error(response, "智能模型").await;
         return Err(AppError::BadResponse(format!("智能模型 {status}: {text}")));
     }
-    let payload: OpenAiChatResponse = response.json().await?;
+    let payload: OpenAiChatResponse = parse_json_response(response, "智能模型").await?;
     payload
         .choices
         .into_iter()
@@ -195,13 +185,14 @@ async fn list_openai_compatible_models(
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text = response_text_for_error(response, "模型列表").await;
         return Err(AppError::BadResponse(format!(
             "模型列表 {status}: {}",
             compact_text(&text, 240)
         )));
     }
-    parse_model_list(response.json().await?)
+    let payload: Value = parse_json_response(response, "模型列表").await?;
+    parse_model_list(payload)
 }
 
 // --- Anthropic native branch ----------------------------------------------
@@ -303,12 +294,12 @@ async fn chat_anthropic(
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text = response_text_for_error(response, "克劳德接口").await;
         return Err(AppError::BadResponse(format!(
             "克劳德接口 {status}: {text}"
         )));
     }
-    let payload: AnthropicResponse = response.json().await?;
+    let payload: AnthropicResponse = parse_json_response(response, "克劳德接口").await?;
     let text_parts: Vec<String> = payload
         .content
         .into_iter()
@@ -335,13 +326,14 @@ async fn list_anthropic_models(client: &Client, config: &LlmConfig) -> AppResult
         .await?;
     if !response.status().is_success() {
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text = response_text_for_error(response, "克劳德模型列表").await;
         return Err(AppError::BadResponse(format!(
             "克劳德模型列表 {status}: {}",
             compact_text(&text, 240)
         )));
     }
-    parse_model_list(response.json().await?)
+    let payload: Value = parse_json_response(response, "克劳德模型列表").await?;
+    parse_model_list(payload)
 }
 
 fn anthropic_base(config: &LlmConfig) -> String {
@@ -355,19 +347,87 @@ fn anthropic_base(config: &LlmConfig) -> String {
         .to_string()
 }
 
-fn parse_model_list(payload: ModelListResponse) -> AppResult<Vec<String>> {
-    let mut models: Vec<String> = payload
-        .data
-        .into_iter()
-        .map(|model| model.id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .collect();
+async fn parse_json_response<T>(response: Response, context: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    let text = read_response_text(response, context).await?;
+    parse_json_text(&text, context)
+}
+
+async fn read_response_text(response: Response, context: &str) -> AppResult<String> {
+    response.text().await.map_err(|err| {
+        AppError::BadResponse(format!("{context}响应读取失败：{}", err))
+    })
+}
+
+async fn response_text_for_error(response: Response, context: &str) -> String {
+    match read_response_text(response, context).await {
+        Ok(text) => text,
+        Err(err) => err.to_string(),
+    }
+}
+
+fn parse_json_text<T>(text: &str, context: &str) -> AppResult<T>
+where
+    T: DeserializeOwned,
+{
+    if text.trim().is_empty() {
+        return Err(AppError::BadResponse(format!("{context}响应为空。")));
+    }
+    serde_json::from_str(text).map_err(|err| {
+        AppError::BadResponse(format!(
+            "{context}响应不是有效 JSON：{}。响应摘要：{}",
+            err,
+            compact_text(text, 240)
+        ))
+    })
+}
+
+fn parse_model_list(payload: Value) -> AppResult<Vec<String>> {
+    let mut models = Vec::new();
+    collect_model_ids(&payload, &mut models);
     models.sort();
     models.dedup();
     if models.is_empty() {
-        return Err(AppError::BadResponse("模型列表为空。".to_string()));
+        return Err(AppError::BadResponse(format!(
+            "模型列表为空或格式不受支持。响应摘要：{}",
+            compact_text(&payload.to_string(), 240)
+        )));
     }
     Ok(models)
+}
+
+fn collect_model_ids(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(model) => push_model_id(out, model),
+        Value::Array(items) => {
+            for item in items {
+                collect_model_ids(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for key in ["id", "name", "model"] {
+                if let Some(Value::String(model)) = map.get(key) {
+                    push_model_id(out, model);
+                    return;
+                }
+            }
+            for key in ["data", "models"] {
+                if let Some(nested) = map.get(key) {
+                    collect_model_ids(nested, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_model_id(out: &mut Vec<String>, model: &str) {
+    let id = model.trim();
+    if !id.is_empty() {
+        out.push(id.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -444,5 +504,66 @@ mod tests {
             })
             .collect();
         assert_eq!(texts, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn parses_openai_model_data_objects() {
+        let payload = serde_json::json!({
+            "object": "list",
+            "data": [
+                { "id": "gpt-4o-mini", "object": "model" },
+                { "id": "gpt-4.1" }
+            ]
+        });
+        assert_eq!(
+            parse_model_list(payload).unwrap(),
+            vec!["gpt-4.1".to_string(), "gpt-4o-mini".to_string()]
+        );
+    }
+
+    #[test]
+    fn parses_common_openai_compatible_model_shapes() {
+        let payload = serde_json::json!({
+            "data": ["deepseek-chat"],
+            "models": [
+                { "name": "qwen-plus" },
+                { "model": "glm-4" }
+            ]
+        });
+        assert_eq!(
+            parse_model_list(payload).unwrap(),
+            vec![
+                "deepseek-chat".to_string(),
+                "glm-4".to_string(),
+                "qwen-plus".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_top_level_model_array() {
+        let payload = serde_json::json!(["local-a", "local-b"]);
+        assert_eq!(
+            parse_model_list(payload).unwrap(),
+            vec!["local-a".to_string(), "local-b".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_model_list_with_summary() {
+        let err = parse_model_list(serde_json::json!({ "ok": true }))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("模型列表为空或格式不受支持"));
+        assert!(err.contains("\"ok\":true"));
+    }
+
+    #[test]
+    fn invalid_json_error_keeps_context_and_summary() {
+        let err = parse_json_text::<Value>("<html>bad gateway</html>", "模型列表")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("模型列表响应不是有效 JSON"));
+        assert!(err.contains("bad gateway"));
     }
 }
